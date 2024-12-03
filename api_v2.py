@@ -15,7 +15,26 @@
 endpoint: `/tts`
 GET:
 ```
-http://127.0.0.1:9880/tts?text=先帝创业未半而中道崩殂，今天下三分，益州疲弊，此诚危急存亡之秋也。&text_lang=zh&ref_audio_path=archive_jingyuan_1.wav&prompt_lang=zh&prompt_text=我是「罗浮」云骑将军景元。不必拘谨，「将军」只是一时的身份，你称呼我景元便可&text_split_method=cut5&batch_size=1&media_type=wav&streaming_mode=true
+http://127.0.0.1:9880/tts?
+text=先帝创业未半而中道崩殂，今天下三分，益州疲弊，此诚危急存亡之秋也。
+&text_lang=zh
+&ref_audio_path=archive_jingyuan_1.wav
+&prompt_lang=zh
+&prompt_text=我是「罗浮」云骑将军景元。不必拘谨，「将军」只是一时的身份，你称呼我景元便可
+&text_split_method=cut5
+&batch_size=1
+&media_type=wav
+&streaming_mode=true
+
+http://10.0.0.1:59880/tts?
+text=%E5%85%88%E5%B8%9D%E5%88%9B%E4%B8%9A%E6%9C%AA%E5%8D%8A%E8%80%8C%E4%B8%AD%E9%81%93%E5%B4%A9%E6%AE%82%EF%BC%8C%E4%BB%8A%E5%A4%A9%E4%B8%8B%E4%B8%89%E5%88%86%EF%BC%8C%E7%9B%8A%E5%B7%9E%E7%96%B2%E5%BC%8A%EF%BC%8C%E6%AD%A4%E8%AF%9A%E5%8D%B1%E6%80%A5%E5%AD%98%E4%BA%A1%E4%B9%8B%E7%A7%8B%E4%B9%9F%E3%80%82
+&text_lang=zh
+&ref_audio_path=/home/data/liujiaqi/Ai/Qi_Video_translation/workplace/test2/raw_person_voice/175.wav
+&prompt_lang=ja
+&text_split_method=cut5
+&batch_size=1
+&media_type=wav
+&streaming_mode=true
 ```
 
 POST:
@@ -33,9 +52,9 @@ POST:
     "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
     "batch_size": 1,              # int. batch size for inference
     "batch_threshold": 0.75,      # float. threshold for batch splitting.
-    "split_bucket: True,          # bool. whether to split the batch into multiple buckets.
-    "speed_factor":1.0,           # float. control the speed of the synthesized audio.
-    "streaming_mode": False,      # bool. whether to return a streaming response.
+    "split_bucket: True,          # bool. whether to split the batch into multiple buckets. 是否将批处理分成多个桶。
+    "speed_factor":1.0,           # float. control the speed of the synthesized audio. 控制合成音频的速度。
+    "streaming_mode": False,      # bool. whether to return a streaming response. 是否返回流响应。
     "seed": -1,                   # int. random seed for reproducibility.
     "parallel_infer": True,       # bool. whether to use parallel inference.
     "repetition_penalty": 1.35    # float. repetition penalty for T2S model.
@@ -126,8 +145,8 @@ cut_method_names = get_cut_method_names()
 
 parser = argparse.ArgumentParser(description="GPT-SoVITS api")
 parser.add_argument("-c", "--tts_config", type=str, default="GPT_SoVITS/configs/tts_infer.yaml", help="tts_infer路径")
-parser.add_argument("-a", "--bind_addr", type=str, default="127.0.0.1", help="default: 127.0.0.1")
-parser.add_argument("-p", "--port", type=int, default="9880", help="default: 9880")
+parser.add_argument("-a", "--bind_addr", type=str, default="0.0.0.0", help="default: 0.0.0.0")
+parser.add_argument("-p", "--port", type=int, default="59880", help="default: 59880")
 args = parser.parse_args()
 config_path = args.tts_config
 # device = args.device
@@ -451,7 +470,7 @@ async def set_sovits_weights(weights_path: str = None):
 
 if __name__ == "__main__":
     try:
-        uvicorn.run(app=APP, host=host, port=port, workers=1)
+        uvicorn.run(app=APP, host="0.0.0.0", port=19999, workers=1)
     except Exception as e:
         traceback.print_exc()
         os.kill(os.getpid(), signal.SIGTERM)

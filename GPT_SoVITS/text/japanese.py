@@ -1,8 +1,10 @@
 # modified from https://github.com/CjangCjengh/vits/blob/main/text/japanese.py
-import re
-
-import pyopenjtalk
 import os
+os.environ['OPEN_JTALK_DICT_DIR']="/home/data/liujiaqi/Ai/GPT-SoVITS/pyopenjtalk_dir"
+
+import re
+import pyopenjtalk
+
 import hashlib
 current_file_path = os.path.dirname(__file__)
 def get_hash(fp: str) -> str:
