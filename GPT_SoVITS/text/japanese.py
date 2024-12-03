@@ -1,6 +1,6 @@
 # modified from https://github.com/CjangCjengh/vits/blob/main/text/japanese.py
 import os
-os.environ['OPEN_JTALK_DICT_DIR']="/home/data/liujiaqi/Ai/GPT-SoVITS/pyopenjtalk_dir"
+os.environ['OPEN_JTALK_DICT_DIR']="/home/data/liujiaqi/Ai/GPT-SoVITS/GPT_SoVITS/text/pyopenjtalk_dir"
 
 import re
 import pyopenjtalk
