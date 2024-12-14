@@ -1,13 +1,16 @@
 import json
 import logging
 import os
+import re
+
+import pysubs2
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import sys
 from pathlib import Path
 
-import requests
+import langid
 from langdetect import detect_langs
 import ffmpeg
 import torch
@@ -82,12 +85,13 @@ output_voice_mp3_dir = os.path.join(TEMP_PATH, "output.mp3")
 asr_result_dir = os.path.join(TEMP_PATH, "asr.json")
 cut_result_dir = os.path.join(TEMP_PATH, "cut.json")
 translate_result_dir = os.path.join(TEMP_PATH, "translate.json")
+subtitles_result_dir = os.path.join(TEMP_PATH, "subtitles.json")
 
 uvr5_instrument_dir = os.path.join(TEMP_PATH, "uvr5", "instrument")
 uvr5_vocal_dir = os.path.join(TEMP_PATH, "uvr5", "vocal")
 
 cut_instrument_dir = os.path.join(TEMP_PATH, "cut", "instrument")
-cut_vocal_dir = os.path.join(TEMP_PATH, "cut", "vocal")
+cut_asr_vocal_dir = os.path.join(TEMP_PATH, "cut", "vocal_asr")
 
 translated_vocal_dir = os.path.join(TEMP_PATH, "translated", "vocal")
 translated_mix_dir = os.path.join(TEMP_PATH, "translated", "mix")
@@ -96,7 +100,7 @@ DirectoryOrCreate_dir = [
     uvr5_instrument_dir,
     uvr5_vocal_dir,
     cut_instrument_dir,
-    cut_vocal_dir,
+    cut_asr_vocal_dir,
     translated_vocal_dir,
     translated_mix_dir
 ]
@@ -117,6 +121,75 @@ logging.info("ffmpeg，提取视频音频结束")
 
 if not os.path.exists(input_voice_dir):
     raise FileNotFoundError(f"指定的音频文件不存在: {input_voice_dir}，可能是ffmpeg提取视频音频失败")
+
+
+def detect_language_proportion(text):
+    try:
+        # 对输入文本进行语言检测，并返回每种语言的比例
+        languages = detect_langs(text)
+        # 将结果转换成字典格式方便查看和使用
+        language_proportion = {str(lang.lang): lang.prob for lang in languages}
+        return language_proportion
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        return {}
+
+
+logging.info("字幕处理开始")
+
+use_subs_style = {}
+
+if not os.path.exists(subtitles_result_dir):
+    subs = pysubs2.load(subtitles_dir)
+
+    if not subs:
+        raise Exception("字幕文件不生效")
+
+    for event in subs.events:
+        if event.plaintext:
+            language = langid.classify(event.plaintext)
+            if not language:
+                continue
+            if not (output_language in language[0]):
+                logging.info(f"检测到的语言与目标语言不一致：{event.plaintext}")
+                continue
+            if not use_subs_style.get(event.style):
+                use_subs_style[event.style] = 1
+            else:
+                use_subs_style[event.style] = use_subs_style[event.style] + 1
+        pass
+
+    # 利用 max() 函数找到得分最高的项
+    most_use_style = max(use_subs_style, key=use_subs_style.get)
+
+    logging.info(f"字幕得使用率最高的style是: {most_use_style}，得分为: {use_subs_style[most_use_style]}")
+
+    subtitles = {}
+    start_id = 0
+    for event in subs.events:
+        if event.plaintext and event.style == most_use_style:
+            pattern = r"(www.|http|字幕组)"
+            if re.search(pattern, event.plaintext):
+                logging.info(f"无意义字幕组: {event.plaintext}")
+                continue
+            # 解决一下字幕包含括号注解问题，如果发现这个字幕完全是个注释那么直接跳过处理
+            event.plaintext = re.sub(r'\(.*?\)', '', event.plaintext)
+            if len(event.plaintext) <= 0:
+                continue
+
+            subtitles[start_id] = {
+                "id": start_id,
+                "start": event.start,
+                "end": event.end,
+                "text": event.plaintext
+            }
+            start_id = start_id + 1
+
+    with open(subtitles_result_dir, "w", encoding="utf-8") as f:
+        json.dump(subtitles, f, ensure_ascii=False, indent=4)
+else:
+    with open(subtitles_result_dir, "r", encoding="utf-8") as f:
+        subtitles = json.load(f)
 
 logging.info("使用uvr5提取人声开始")
 
@@ -175,18 +248,6 @@ logging.info("开始分离提取人声")
 change_list = []
 
 
-def detect_language_proportion(text):
-    try:
-        # 对输入文本进行语言检测，并返回每种语言的比例
-        languages = detect_langs(text)
-        # 将结果转换成字典格式方便查看和使用
-        language_proportion = {str(lang.lang): lang.prob for lang in languages}
-        return language_proportion
-    except Exception as e:
-        logging.error(f"Error: {str(e)}")
-        return {}
-
-
 if not os.path.exists(cut_result_dir):
     instrument_input_wav_audio = AudioSegment.from_mp3(file=instrument_input_wav)
     vocal_input_wav_audio = AudioSegment.from_mp3(file=vocal_input_wav)
@@ -205,15 +266,16 @@ if not os.path.exists(cut_result_dir):
             logging.debug(f"跳过小于1字数：{asr_id}")
             continue
 
-        asr_language = detect_language_proportion(asr_text)
-        if not (input_language in max(asr_language, key=asr_language.get)):
-            logging.debug(f"检测到的语言与目标语言不一致：{asr_id}")
+        asr_language = langid.classify(asr_text)
+        if not asr_language:
+            continue
+        if not (input_language in asr_language[0]):
+            logging.info(f"检测到的语言与目标语言不一致：{asr_text}")
             continue
 
         cut_instrument = instrument_input_wav_audio[asr_start:asr_end]
         cut_vocal = vocal_input_wav_audio[asr_start:asr_end]
-        cut_instrument.export(os.path.join(cut_instrument_dir, f"{asr_id}.wav"), format="wav")
-        cut_vocal.export(os.path.join(cut_vocal_dir, f"{asr_id}.wav"), format="wav")
+        cut_vocal.export(os.path.join(cut_asr_vocal_dir, f"{asr_id}.wav"), format="wav")
         change_list.append(asr_segment)
 
     with open(cut_result_dir, "w", encoding="utf-8") as f:
@@ -224,86 +286,29 @@ else:
 
 logging.info("人声提取完成")
 
-logging.info("过滤数据开始")
+logging.info("字幕与ARS数据匹配")
 
-for one in change_list:
-    pass
+def find_segment_id(timestamp_sec):
+    global change_list
+    query_start = timestamp_sec - 0.1
+    query_end = timestamp_sec + 0.1
 
-logging.info("过滤数据完成")
+    for segment in change_list:
+        if query_start < segment["end"] and query_end > segment["start"]:
+            return segment
+    return None
 
-logging.info("开始调取大模型准备翻译")
+for id , subtitle in subtitles.items():
+    start = subtitle.get("start")
+    if start == 0:
+        continue
+    asr_segment = find_segment_id(start/1000)
+    if asr_segment:
+        subtitles[id]["asr_segment"] = asr_segment
 
-num = 1
-translate_list = []
+logging.info("字幕与ARS数据匹配完成")
 
-if not os.path.exists(translate_result_dir):
-    while True:
-        content_data = ""
-        need_exit = False
-        for m in range(6):
-            if num + m < len(change_list):
-                content_data = f'{content_data}[{m}] {change_list[num + m - 1].get("text")}\n'
-            else:
-                need_exit = True
 
-        request_json = {
-            "model": "qwen2.5:7b",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "字幕翻译成中文，直接输出"
-                },
-                {
-                    "role": "user",
-                    "content": content_data
-                }
-            ],
-            "stream": False
-        }
-
-        request_result = requests.post(url="http://10.0.0.1:11434/api/chat", json=request_json)
-        request_json = request_result.json()
-        if not request_json.get('done'):
-            raise Exception("翻译模型异常")
-        content = request_json.get('message').get('content')
-
-        contents = str(content).split("\n")
-        for one_content in contents:
-            if not one_content:  # 如果内容是空的，跳过
-                continue
-            try:
-                # 提取 ID 和文本内容
-                # 我们假设 ID 和文本之间有一个空格
-                id_text = one_content.split(" ", 1)
-
-                # 移除方括号并将 ID 转换成整数
-                id = int(id_text[0].strip('[]'))  # ID部分
-                text = id_text[1]  # 文本部分
-
-                asr_language = detect_language_proportion(text)
-                if not (output_language in max(asr_language, key=asr_language.get)):
-                    logging.debug(f"检测到的语言与目标语言不一致：{text}")
-                    continue
-
-                add_one = change_list[num + id - 1]
-                add_one["transl"] = text
-                translate_list.append(add_one)
-
-                logging.info(f"[{num + id}] {text}")
-            except Exception as err:
-                logging.warning(f"翻译提取失败{one_content}：{err}")
-
-        num = num + 6
-        if need_exit:
-            break
-
-    with open(translate_result_dir, "w", encoding="utf-8") as f:
-        json.dump(translate_list, f, ensure_ascii=False, indent=4)
-else:
-    with open(translate_result_dir, "r", encoding="utf-8") as f:
-        translate_list = json.load(f)
-
-logging.info("翻译工作完成")
 
 logging.info("开始音频合成工作")
 
@@ -313,112 +318,115 @@ result_total = {
     "out_of_time": []
 }
 
-for one in translate_list:
-    if os.path.exists(os.path.join(translated_vocal_dir, f'{one.get("id")}.wav')):
-        continue
-        pass
+for id,one in subtitles.items():
+    a = "1"
+    if asr_segment := one.get('asr_segment'):
 
-    ref_audio_path = os.path.join(cut_vocal_dir, f'{one.get("id")}.wav')
-    if not os.path.exists(ref_audio_path):
-        continue
-        pass
+        if os.path.exists(os.path.join(translated_vocal_dir, f'{id}.wav')):
+            continue
+            pass
 
-    req = {
-        "text": one.get("transl"),  # str.(required) text to be synthesized
-        "text_lang": output_language,  # str.(required) language of the text to be synthesized
-        "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
-        "aux_ref_audio_paths": [],  # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
-        "prompt_text": one.get("text"),  # str.(optional) prompt text for the reference audio
-        "prompt_lang": input_language,  # str.(required) language of the prompt text for the reference audio
-        "top_k": 5,  # int. top k sampling
-        "top_p": 1,  # float. top p sampling
-        "temperature": 1,  # float. temperature for sampling
-        "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
-        "batch_size": 1,  # int. batch size for inference
-        "batch_threshold": 0.75,  # float. threshold for batch splitting.
-        "split_bucket": True,  # bool. whether to split the batch into multiple buckets.
-        "return_fragment": False,  # bool. step by step return the audio fragment.
-        "speed_factor": 1.0,  # float. control the speed of the synthesized audio.
-        "fragment_interval": 0.3,  # float. to control the interval of the audio fragment.
-        "seed": -1,  # int. random seed for reproducibility.
-        "parallel_infer": True,  # bool. whether to use parallel inference.
-        "repetition_penalty": 1.35  # float. repetition penalty for T2S model.
-    }
+        ref_audio_path = os.path.join(cut_asr_vocal_dir, f'{asr_segment.get("id")}.wav')
+        if not os.path.exists(ref_audio_path):
+            continue
+            pass
 
-    try:
-        output_wav = os.path.join(translated_vocal_dir, f'{one.get("id")}.wav')
-        tts_generator = tts_pipeline.run(req)
-        sr, audio_data = next(tts_generator)
-        sf.write(output_wav, audio_data, sr, format='wav')
-        audio_segment = AudioSegment.from_wav(output_wav)
-        duration_ms = len(audio_segment)
-        cost_time = (one.get("end") - one.get("start")) * 1000
-        if duration_ms > cost_time:
-            speed = (duration_ms / cost_time) + 0.1
-            logging.warning("输出音频时长大于原音频，需要压缩时长")
-            new_speed_audio = audio_segment.speedup(playback_speed=speed)
-            new_speed_audio.export(output_wav, format="wav")
-            new_duration_ms = len(new_speed_audio)
-            logging.debug(f"调整速度后的音频时长: {new_duration_ms} ms")
-            result_total["out_of_time"].append(one.get("id"))
-        else:
-            result_total["success"].append(one.get("id"))
-        pass
-    except Exception as e:
-        logging.error(f"TTS异常:{e}")
-        result_total["failed"].append(one.get("id"))
-    finally:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        req = {
+            "text": one.get("text"),  # str.(required) text to be synthesized
+            "text_lang": output_language,  # str.(required) language of the text to be synthesized
+            "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
+            "aux_ref_audio_paths": [],  # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
+            "prompt_text": asr_segment.get("text"),  # str.(optional) prompt text for the reference audio
+            "prompt_lang": input_language,  # str.(required) language of the prompt text for the reference audio
+            "top_k": 5,  # int. top k sampling
+            "top_p": 1,  # float. top p sampling
+            "temperature": 1,  # float. temperature for sampling
+            "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
+            "batch_size": 1,  # int. batch size for inference
+            "batch_threshold": 0.75,  # float. threshold for batch splitting.
+            "split_bucket": True,  # bool. whether to split the batch into multiple buckets.
+            "return_fragment": False,  # bool. step by step return the audio fragment.
+            "speed_factor": 1.0,  # float. control the speed of the synthesized audio.
+            "fragment_interval": 0.3,  # float. to control the interval of the audio fragment.
+            "seed": -1,  # int. random seed for reproducibility.
+            "parallel_infer": True,  # bool. whether to use parallel inference.
+            "repetition_penalty": 1.35  # float. repetition penalty for T2S model.
+        }
+
+        try:
+            output_wav = os.path.join(translated_vocal_dir, f'{id}.wav')
+            tts_generator = tts_pipeline.run(req)
+            sr, audio_data = next(tts_generator)
+            sf.write(output_wav, audio_data, sr, format='wav')
+            audio_segment = AudioSegment.from_wav(output_wav)
+            duration_ms = len(audio_segment)
+            cost_time = (one.get("end") - one.get("start"))
+            if duration_ms > cost_time:
+                speed = (duration_ms / cost_time) + 0.1
+                logging.warning("输出音频时长大于原音频，需要压缩时长")
+                new_speed_audio = audio_segment.speedup(playback_speed=speed)
+                new_speed_audio.export(output_wav, format="wav")
+                new_duration_ms = len(new_speed_audio)
+                logging.debug(f"调整速度后的音频时长: {new_duration_ms} ms")
+                result_total["out_of_time"].append(id)
+            else:
+                result_total["success"].append(id)
+            pass
+        except Exception as e:
+            logging.error(f"TTS异常:{e}")
+            result_total["failed"].append(id)
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 logging.info(
     f"""音频合成完成：【成功】{len(result_total["success"])}个 |【失败】{len(result_total["failed"])}个 |【压缩时间】{len(result_total["out_of_time"])}个""")
 
 logging.info("开始混音")
-
-for one in translate_list:
-    translated_wav = os.path.join(translated_vocal_dir, f'{one.get("id")}.wav')
-    instrument_wav = os.path.join(cut_instrument_dir, f'{one.get("id")}.wav')
-    output_wav = os.path.join(translated_mix_dir, f'{one.get("id")}.wav')
-    if os.path.exists(output_wav):
-        continue
-        pass
-    if not os.path.exists(translated_wav):
-        continue
-        pass
-    translated_audio = AudioSegment.from_file(translated_wav)
-    background_audio = AudioSegment.from_file(instrument_wav)
-    mixed_audio = background_audio.overlay(translated_audio)
-    mixed_audio.export(output_wav, format="wav")
-    pass
-
-logging.info("混音结束")
-
-
-logging.info("开始合并输出音频")
-input_voice_audio = AudioSegment.from_file(input_voice_dir)
-# combined_audio = AudioSegment.empty().set_channels(2)
-
-
-
-the_end_time = 0
-for i in range(len(translate_list)):
-    this_fragment = translate_list[i]
-    id = translate_list[i].get("id")
-    if not os.path.exists(os.path.join(translated_mix_dir, f'{id}.wav')):
-        continue
-    this_pic = AudioSegment.from_file(os.path.join(translated_mix_dir, f'{id}.wav'))
-    transl = this_fragment.get("transl")
-    start = this_fragment.get("start") * 1000
-    end = this_fragment.get("end") * 1000
-    input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
-    pass
-
-input_voice_audio.export(output_voice_dir, format='wav')
-
-logging.info("音频合成完成")
-
-input_voice_audio.export(output_voice_mp3_dir, format='mp3', bitrate="192k")
-logging.info("输出音频已压缩为MP3格式")
-
-exit(0)
+#
+# for one in translate_list:
+#     translated_wav = os.path.join(translated_vocal_dir, f'{one.get("id")}.wav')
+#     instrument_wav = os.path.join(cut_instrument_dir, f'{one.get("id")}.wav')
+#     output_wav = os.path.join(translated_mix_dir, f'{one.get("id")}.wav')
+#     if os.path.exists(output_wav):
+#         continue
+#         pass
+#     if not os.path.exists(translated_wav):
+#         continue
+#         pass
+#     translated_audio = AudioSegment.from_file(translated_wav)
+#     background_audio = AudioSegment.from_file(instrument_wav)
+#     mixed_audio = background_audio.overlay(translated_audio)
+#     mixed_audio.export(output_wav, format="wav")
+#     pass
+#
+# logging.info("混音结束")
+#
+#
+# logging.info("开始合并输出音频")
+# input_voice_audio = AudioSegment.from_file(input_voice_dir)
+# # combined_audio = AudioSegment.empty().set_channels(2)
+#
+#
+#
+# the_end_time = 0
+# for i in range(len(translate_list)):
+#     this_fragment = translate_list[i]
+#     id = translate_list[i].get("id")
+#     if not os.path.exists(os.path.join(translated_mix_dir, f'{id}.wav')):
+#         continue
+#     this_pic = AudioSegment.from_file(os.path.join(translated_mix_dir, f'{id}.wav'))
+#     transl = this_fragment.get("transl")
+#     start = this_fragment.get("start") * 1000
+#     end = this_fragment.get("end") * 1000
+#     input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
+#     pass
+#
+# input_voice_audio.export(output_voice_dir, format='wav')
+#
+# logging.info("音频合成完成")
+#
+# input_voice_audio.export(output_voice_mp3_dir, format='mp3', bitrate="192k")
+# logging.info("输出音频已压缩为MP3格式")
+#
+# exit(0)
