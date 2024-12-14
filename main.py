@@ -27,9 +27,12 @@ sys.path.append(f"{BASE_DIR}/GPT_SoVITS")
 import soundfile as sf
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
+from pyannote.audio import Pipeline as pyannote_Pipeline
 
-# 这里可以配置参数
 
+pyannote_pipeline= pyannote_Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token="HUGGINGFACE_ACCESS_TOKEN_GOES_HERE")
+asr_model = whisper.load_model("large-v3",
+                                   download_root=os.path.join(BASE_DIR, config.asr_models_path, "Whisper-large-v3"))
 
 # 人声提取激进程度 0-20，默认10
 agg = 10
@@ -66,7 +69,8 @@ subtitles.ass       视频字幕
 - translated
       - vocal       人声翻译音频音频
       - mix         背景音乐切片
-      
+- speakers
+      - 1.wav       讲述人
 '''
 
 logging.info(f"程序启动成功，运行目录是：{BASE_DIR}")
@@ -77,7 +81,6 @@ input_video_dir = os.path.join(TEMP_PATH, "input.mp4")
 input_voice_dir = os.path.join(TEMP_PATH, "input.wav")
 subtitles_dir = os.path.join(TEMP_PATH, "subtitles.ass")
 
-
 output_video_dir = os.path.join(TEMP_PATH, "output.mp4")
 output_voice_dir = os.path.join(TEMP_PATH, "output.wav")
 output_voice_mp3_dir = os.path.join(TEMP_PATH, "output.mp3")
@@ -86,9 +89,13 @@ asr_result_dir = os.path.join(TEMP_PATH, "asr.json")
 cut_result_dir = os.path.join(TEMP_PATH, "cut.json")
 translate_result_dir = os.path.join(TEMP_PATH, "translate.json")
 subtitles_result_dir = os.path.join(TEMP_PATH, "subtitles.json")
+pyannote_result_dir = os.path.join(TEMP_PATH, "pyannote.json")
+speaker_result_dir = os.path.join(TEMP_PATH, "speaker.json")
 
 uvr5_instrument_dir = os.path.join(TEMP_PATH, "uvr5", "instrument")
 uvr5_vocal_dir = os.path.join(TEMP_PATH, "uvr5", "vocal")
+
+speakers_dir = os.path.join(TEMP_PATH, "speakers")
 
 cut_instrument_dir = os.path.join(TEMP_PATH, "cut", "instrument")
 cut_asr_vocal_dir = os.path.join(TEMP_PATH, "cut", "vocal_asr")
@@ -102,7 +109,8 @@ DirectoryOrCreate_dir = [
     cut_instrument_dir,
     cut_asr_vocal_dir,
     translated_vocal_dir,
-    translated_mix_dir
+    translated_mix_dir,
+    speakers_dir
 ]
 
 # 检查一下目录是否存在，如果不存在就创建
@@ -231,8 +239,6 @@ logging.info("使用uvr5提取人声完成")
 logging.info("开始提取人声内容")
 
 if not os.path.exists(asr_result_dir):
-    asr_model = whisper.load_model("large-v3",
-                                   download_root=os.path.join(BASE_DIR, config.asr_models_path, "Whisper-large-v3"))
     asr_result = asr_model.transcribe(vocal_input_wav, language=input_language, initial_prompt=None)
     with open(asr_result_dir, "w", encoding="utf-8") as f:
         json.dump(asr_result, f, ensure_ascii=False, indent=4)
@@ -247,9 +253,7 @@ logging.info("开始分离提取人声")
 
 change_list = []
 
-
 if not os.path.exists(cut_result_dir):
-    instrument_input_wav_audio = AudioSegment.from_mp3(file=instrument_input_wav)
     vocal_input_wav_audio = AudioSegment.from_mp3(file=vocal_input_wav)
 
     for asr_segment in asr_segments:
@@ -273,7 +277,6 @@ if not os.path.exists(cut_result_dir):
             logging.info(f"检测到的语言与目标语言不一致：{asr_text}")
             continue
 
-        cut_instrument = instrument_input_wav_audio[asr_start:asr_end]
         cut_vocal = vocal_input_wav_audio[asr_start:asr_end]
         cut_vocal.export(os.path.join(cut_asr_vocal_dir, f"{asr_id}.wav"), format="wav")
         change_list.append(asr_segment)
@@ -286,7 +289,69 @@ else:
 
 logging.info("人声提取完成")
 
-logging.info("字幕与ARS数据匹配")
+logging.info("讲述人确认开始")
+pyannote_result = []
+
+if not os.path.exists(pyannote_result_dir):
+    pyannote_dia = pyannote_pipeline(vocal_input_wav)
+    for speech_turn, track, speaker in pyannote_dia.itertracks(yield_label=True):
+        pyannote_result.append({
+            "start": int(speech_turn.start * 1000),
+            "end": int(speech_turn.end * 1000),
+            "track": track,
+            "speaker": speaker
+        })
+    with open(pyannote_result_dir, "w", encoding="utf-8") as f:
+        json.dump(pyannote_result, f, ensure_ascii=False, indent=4)
+else:
+    with open(pyannote_result_dir, "r", encoding="utf-8") as f:
+        pyannote_result = json.load(f)
+
+# Step 1: Initialize an empty dictionary
+grouped_by_speaker = {}
+
+# Step 2: Iterate over the original list to group by 'speaker'
+for event in pyannote_result:
+    speaker = event["speaker"]
+    if speaker not in grouped_by_speaker:
+        # Step 3: Create a new list if the speaker is not already a key in the dictionary
+        grouped_by_speaker[speaker] = []
+    # Step 4: Append the event to the speaker's list
+    grouped_by_speaker[speaker].append(event)
+
+
+vocal_input_wav_audio = AudioSegment.from_mp3(file=vocal_input_wav)
+
+speaker_json = {}
+if os.path.exists(speaker_result_dir):
+    with open(speaker_result_dir, "r", encoding="utf-8") as f:
+        speaker_json = json.load(f)
+
+for name, all_speaker_voice in grouped_by_speaker.items():
+    all_voice = None
+    for speaker_voice in all_speaker_voice:
+        start = speaker_voice.get("start")
+        end = speaker_voice.get("end")
+        if not all_voice:
+            all_voice = vocal_input_wav_audio[start:end]
+        else:
+            all_voice = all_voice + vocal_input_wav_audio[start:end]
+    if all_voice:
+        tmp_dir = os.path.join(speakers_dir, f"{name}.wav")
+        if os.path.exists(tmp_dir):
+            continue
+        # 防止爆表
+        if len(all_voice) > 8000:
+            all_voice = all_voice[0:8000]
+        all_voice.export(tmp_dir, format='wav')
+        temp_asr_result = asr_model.transcribe(tmp_dir, language=input_language, initial_prompt=None)
+        speaker_json[name] = temp_asr_result
+        pass
+with open(speaker_result_dir, "w", encoding="utf-8") as f:
+    json.dump(speaker_json, f, ensure_ascii=False, indent=4)
+
+logging.info("讲述人确认完成")
+
 
 def find_segment_id(timestamp_sec):
     global change_list
@@ -298,17 +363,34 @@ def find_segment_id(timestamp_sec):
             return segment
     return None
 
-for id , subtitle in subtitles.items():
+def find_speaker(timestamp):
+    global pyannote_result
+    for pyannote in pyannote_result:
+        if pyannote["end"] > timestamp > pyannote["start"]:
+            return pyannote
+    return None
+
+logging.info("字幕与ARS数据匹配")
+
+for id, subtitle in subtitles.items():
     start = subtitle.get("start")
-    if start == 0:
-        continue
-    asr_segment = find_segment_id(start/1000)
+    end = subtitle.get("end")
+    mind = start + (start + end) / 2
+    speaker = find_speaker(mind)
+    if speaker:
+        subtitles[id]["speaker"] = speaker
+
+for id, subtitle in subtitles.items():
+    start = subtitle.get("start")
+    end = subtitle.get("end")
+    # 取时间中位数方案
+    timestamp = start + (start + end) / 2
+    # Todo: 到底用什么方案合理？？
+    asr_segment = find_segment_id(start / 1000)
     if asr_segment:
         subtitles[id]["asr_segment"] = asr_segment
 
 logging.info("字幕与ARS数据匹配完成")
-
-
 
 logging.info("开始音频合成工作")
 
@@ -318,25 +400,35 @@ result_total = {
     "out_of_time": []
 }
 
-for id,one in subtitles.items():
-    a = "1"
-    if asr_segment := one.get('asr_segment'):
+for id, one in subtitles.items():
+    if (asr_segment := one.get('asr_segment')) or (speaker := one.get('speaker')):
 
         if os.path.exists(os.path.join(translated_vocal_dir, f'{id}.wav')):
             continue
             pass
 
-        ref_audio_path = os.path.join(cut_asr_vocal_dir, f'{asr_segment.get("id")}.wav')
-        if not os.path.exists(ref_audio_path):
-            continue
-            pass
+        speaker = one.get('speaker')
+        prompt_text = ""
+        ref_audio_path = ""
+        if speaker and (it_speaker := speaker_json.get(speaker.get("speaker"))):
+            prompt_text = it_speaker.get("text")
+            ref_audio_path = os.path.join(speakers_dir, f'{speaker.get("speaker")}.wav')
+            if not os.path.exists(ref_audio_path):
+                prompt_text = ""
+
+        if not prompt_text or not ref_audio_path:
+            prompt_text = asr_segment.get("text")
+            ref_audio_path = os.path.join(cut_asr_vocal_dir, f'{asr_segment.get("id")}.wav')
+            if not os.path.exists(ref_audio_path):
+                continue
+                pass
 
         req = {
             "text": one.get("text"),  # str.(required) text to be synthesized
             "text_lang": output_language,  # str.(required) language of the text to be synthesized
             "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
             "aux_ref_audio_paths": [],  # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
-            "prompt_text": asr_segment.get("text"),  # str.(optional) prompt text for the reference audio
+            "prompt_text": prompt_text,  # str.(optional) prompt text for the reference audio
             "prompt_lang": input_language,  # str.(required) language of the prompt text for the reference audio
             "top_k": 5,  # int. top k sampling
             "top_p": 1,  # float. top p sampling
