@@ -2,13 +2,8 @@ import json
 import logging
 import os
 import re
-import time
-from collections import deque
-import librosa
 import pysubs2
-# from modelscope import Tasks as modelscope_Tasks
 from retrying import retry
-# from modelscope.pipelines import pipeline as modelscope_pipeline
 from utils.file_path import PathManager
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -17,7 +12,6 @@ import sys
 from pathlib import Path
 
 import langid
-from langdetect import detect_langs
 import ffmpeg
 import torch
 import whisper
@@ -132,7 +126,7 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
     try:
         pre_fun = AudioPre(
             agg=agg,
-            model_path=os.path.join(BASE_DIR, config.uvr5_weights_path, "5_HP-Karaoke-UVR.pth"),
+            model_path=os.path.join(BASE_DIR, config.uvr5_weights_path, "HP5_only_main_vocal.pth"),
             device=config.infer_device,
             is_half=config.is_half,
         )
