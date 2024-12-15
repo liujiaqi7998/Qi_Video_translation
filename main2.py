@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import deque
 import librosa
 import pysubs2
@@ -153,13 +154,86 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
             def need_retry():
                 try:
                     logging.info(f"【提取人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
-                    pre_fun._path_audio_(
-                        music_file=input_path,
-                        ins_root=path_manager.cut_instrument_dir,
-                        vocal_root=path_manager.cut_asr_vocal_dir,
-                        format="wav",
-                        is_hp3=False
-                    )
+                    audio = AudioSegment.from_file(input_path)
+                    if audio.channels == 2:
+                        left_channel, right_channel = audio.split_to_mono()
+                        # 保存左声道和右声道音频
+                        l_path = os.path.join(path_manager.cache_dir, f"{id}_l.wav")
+                        r_path = os.path.join(path_manager.cache_dir, f"{id}_r.wav")
+                        left_channel.export(l_path, format="wav")
+                        right_channel.export(r_path, format="wav")
+                        if (not os.path.exists(l_path)) or (not os.path.exists(r_path)):
+                            raise Exception("人声分离，没有分离成双声道")
+                        logging.info(f"【提取人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
+                        l_instrument_out_path = os.path.join(path_manager.cache_dir, f"instrument_{id}_l.wav_10.wav")
+                        r_instrument_out_path = os.path.join(path_manager.cache_dir, f"instrument_{id}_r.wav_10.wav")
+
+                        l_vocal_out_path = os.path.join(path_manager.cache_dir, f"vocal_{id}_l.wav_10.wav")
+                        r_vocal_out_path = os.path.join(path_manager.cache_dir, f"vocal_{id}_r.wav_10.wav")
+
+                        if (not os.path.exists(l_vocal_out_path)) or (not os.path.exists(l_instrument_out_path)):
+                            pre_fun._path_audio_(
+                                music_file=os.path.join(path_manager.cache_dir, f"{id}_l.wav"),
+                                ins_root=path_manager.cache_dir,
+                                vocal_root=path_manager.cache_dir,
+                                format="wav",
+                                is_hp3=False
+                            )
+                        if (not os.path.exists(r_vocal_out_path)) or (not os.path.exists(r_instrument_out_path)):
+                            pre_fun._path_audio_(
+                                music_file=os.path.join(path_manager.cache_dir, f"{id}_r.wav"),
+                                ins_root=path_manager.cache_dir,
+                                vocal_root=path_manager.cache_dir,
+                                format="wav",
+                                is_hp3=False
+                            )
+                        l_l_audio, r_l_audio = AudioSegment.from_file(l_instrument_out_path).split_to_mono()
+                        if l_l_audio.rms < r_l_audio.rms:
+                            l_audio = l_l_audio
+                        else:
+                            l_audio = r_l_audio
+
+                        l_r_audio, r_r_audio = AudioSegment.from_file(r_instrument_out_path).split_to_mono()
+
+                        if l_r_audio.rms < r_r_audio.rms:
+                            r_audio = l_r_audio
+                        else:
+                            r_audio = r_r_audio
+
+                        out_path = os.path.join(path_manager.cut_instrument_dir, f"instrument_{id}.wav_10.wav")
+                        AudioSegment.from_mono_audiosegments(l_audio, r_audio).export(out_path)
+                        os.remove(l_instrument_out_path)
+                        os.remove(r_instrument_out_path)
+
+                        l_l_audio, r_l_audio = AudioSegment.from_file(l_vocal_out_path).split_to_mono()
+                        if l_l_audio.rms < r_l_audio.rms:
+                            l_audio = l_l_audio
+                        else:
+                            l_audio = r_l_audio
+
+                        l_r_audio, r_r_audio = AudioSegment.from_file(r_vocal_out_path).split_to_mono()
+
+                        if l_r_audio.rms < r_r_audio.rms:
+                            r_audio = l_r_audio
+                        else:
+                            r_audio = r_r_audio
+
+                        out_path = os.path.join(path_manager.cut_asr_vocal_dir, f"vocal_{id}.wav_10.wav")
+                        AudioSegment.from_mono_audiosegments(l_audio, r_audio).export(out_path)
+                        os.remove(l_vocal_out_path)
+                        os.remove(r_vocal_out_path)
+
+                        os.remove(l_path)
+                        os.remove(r_path)
+
+                    else:
+                        pre_fun._path_audio_(
+                            music_file=input_path,
+                            ins_root=path_manager.cut_instrument_dir,
+                            vocal_root=path_manager.cut_asr_vocal_dir,
+                            format="wav",
+                            is_hp3=False
+                        )
                     if (not os.path.exists(vocal_path)) or (not os.path.exists(instrument_path)):
                         raise Exception("人声分离没有产出文件")
 
