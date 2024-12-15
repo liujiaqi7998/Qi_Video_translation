@@ -30,7 +30,7 @@ from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names 
 from pyannote.audio import Pipeline as pyannote_Pipeline
 
 
-pyannote_pipeline= pyannote_Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token="HUGGINGFACE_ACCESS_TOKEN_GOES_HERE")
+pyannote_pipeline = pyannote_Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",use_auth_token="HUGGINGFACE_ACCESS_TOKEN_GOES_HERE")
 asr_model = whisper.load_model("large-v3",
                                    download_root=os.path.join(BASE_DIR, config.asr_models_path, "Whisper-large-v3"))
 
