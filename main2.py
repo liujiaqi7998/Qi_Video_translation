@@ -133,10 +133,6 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
             is_half=config.is_half,
         )
 
-        # ans = modelscope_pipeline(
-        #     modelscope_Tasks.acoustic_noise_suppression,
-        #     model='damo/speech_frcrn_ans_cirm_16k')
-
         for id, subtitle in subtitles.items():
             input_path = os.path.join(path_manager.cut_asr_raw_dir, f"{id}.wav")
             vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
@@ -174,7 +170,6 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
                         u_ins_audio = []
                         u_vocal_audio = []
                         for m in range(j):
-                            # 游标转位数
                             ins_path_file = os.path.join(tmp, f"{m}_ins.wav")
                             vocal_path_file = os.path.join(tmp, f"{m}_vocal.wav")
                             l_ins_audio, r_ins_audio = AudioSegment.from_file(ins_path_file).split_to_mono()
@@ -183,6 +178,7 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
                             else:
                                 u_ins_audio.append(r_ins_audio)
                             l_vocal_audio, r_vocal_audio = AudioSegment.from_file(vocal_path_file).split_to_mono()
+                            # 防止爆音 选择能量低的一组
                             if l_vocal_audio.rms < r_vocal_audio.rms:
                                 u_vocal_audio.append(l_vocal_audio)
                             else:
@@ -227,44 +223,42 @@ def deal_asr(path_manager: PathManager, subtitles: dict):
         asr_model = whisper.load_model("large-v3",
                                        download_root=os.path.join(BASE_DIR, config.asr_models_path, "Whisper-large-v3"))
 
-        for _ in range(0, retry_times):
-            # 循环n遍，太离谱了，居然是运气模式！没事多重试几次就好了，哈哈哈^_^！
-            for id, subtitle in subtitles.items():
+        for id, subtitle in subtitles.items():
 
-                if subtitles[id].get("asr_result"):
-                    continue
+            if subtitles[id].get("asr_result"):
+                continue
 
-                vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
+            vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
 
-                if subtitle.get('end') - subtitle.get('start') > 9000:
-                    logging.info(f"{subtitle.get('id')}: {subtitle.get('text')} 大于9秒，强制9秒截断")
-                    audio_segment = AudioSegment.from_wav(vocal_path)
-                    vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}_9s.wav")
-                    audio_segment[subtitle.get('start'):subtitle.get('start') + 9000].export(vocal_path)
-                    subtitles[id]["out_9s"] = True
+            if subtitle.get('end') - subtitle.get('start') > 9000:
+                logging.info(f"{subtitle.get('id')}: {subtitle.get('text')} 大于9秒，强制9秒截断")
+                audio_segment = AudioSegment.from_wav(vocal_path)
+                vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}_9s.wav")
+                audio_segment[subtitle.get('start'):subtitle.get('start') + 9000].export(vocal_path)
+                subtitles[id]["out_9s"] = True
 
-                if not os.path.exists(vocal_path):
-                    continue
+            if not os.path.exists(vocal_path):
+                continue
 
-                @retry(stop_max_attempt_number=retry_times)
-                def need_retry():
-                    try:
-                        logging.info(f"【ASR人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
-                        asr_result = asr_model.transcribe(vocal_path, language=input_language, initial_prompt=None)
-                        if not (input_language in asr_result.get('language')):
-                            logging.info(
-                                f"检测到的语言与目标语言不一致：{subtitle.get('id')}: {subtitle.get('text')}: {asr_result.get('language')}")
-                            return
-                        subtitles[id]["asr_result"] = asr_result
-                    except Exception as err:
-                        logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
-                        raise err
-
+            @retry(stop_max_attempt_number=retry_times)
+            def need_retry():
                 try:
-                    need_retry()
+                    logging.info(f"【ASR人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
+                    asr_result = asr_model.transcribe(vocal_path, language=input_language, initial_prompt=None)
+                    if not (input_language in asr_result.get('language')):
+                        logging.info(
+                            f"检测到的语言与目标语言不一致：{subtitle.get('id')}: {subtitle.get('text')}: {asr_result.get('language')}")
+                        return
+                    subtitles[id]["asr_result"] = asr_result
                 except Exception as err:
-                    logging.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
-                    continue
+                    logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
+                    raise err
+
+            try:
+                need_retry()
+            except Exception as err:
+                logging.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
+                continue
     except Exception as err:
         logging.error(err)
     finally:
@@ -285,77 +279,77 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
         "failed": [],
         "out_of_time": []
     }
-    for _ in range(0, retry_times):
-        for id, subtitle in subtitles.items():
-            if subtitle.get("is_tts"):
+
+    for id, subtitle in subtitles.items():
+        if subtitle.get("is_tts"):
+            continue
+
+        if asr_result := subtitle.get('asr_result'):
+
+            ref_audio_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
+
+            if subtitle.get("out_9s"):
+                # 超过9秒，使用9秒裁剪音频
+                ref_audio_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}_9s.wav")
+
+            if not os.path.exists(ref_audio_path):
+                # 解决 ref_audio_path 音频不存在问题
                 continue
 
-            if asr_result := subtitle.get('asr_result'):
+            req = {
+                "text": subtitle.get("text"),  # str.(required) text to be synthesized
+                "text_lang": output_language,  # str.(required) language of the text to be synthesized
+                "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
+                "aux_ref_audio_paths": [],
+                # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
+                "prompt_text": asr_result.get('text'),  # str.(optional) prompt text for the reference audio
+                "prompt_lang": asr_result.get('language'),
+                # str.(required) language of the prompt text for the reference audio
+                "top_k": 5,  # int. top k sampling
+                "top_p": 1,  # float. top p sampling
+                "temperature": 1,  # float. temperature for sampling
+                "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
+                "batch_size": 1,  # int. batch size for inference
+                "batch_threshold": 0.75,  # float. threshold for batch splitting.
+                "split_bucket": True,  # bool. whether to split the batch into multiple buckets.
+                "return_fragment": False,  # bool. step by step return the audio fragment.
+                "speed_factor": 1.0,  # float. control the speed of the synthesized audio.
+                "fragment_interval": 0.3,  # float. to control the interval of the audio fragment.
+                "seed": -1,  # int. random seed for reproducibility.
+                "parallel_infer": True,  # bool. whether to use parallel inference.
+                "repetition_penalty": 1.35  # float. repetition penalty for T2S model.
+            }
 
-                ref_audio_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
-
-                if subtitle.get("out_9s"):
-                    # 超过9秒，使用9秒裁剪音频
-                    ref_audio_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}_9s.wav")
-
-                if not os.path.exists(ref_audio_path):
-                    # 解决 ref_audio_path 音频不存在问题
-                    continue
-
-                req = {
-                    "text": subtitle.get("text"),  # str.(required) text to be synthesized
-                    "text_lang": output_language,  # str.(required) language of the text to be synthesized
-                    "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
-                    "aux_ref_audio_paths": [],
-                    # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
-                    "prompt_text": asr_result.get('text'),  # str.(optional) prompt text for the reference audio
-                    "prompt_lang": asr_result.get('language'),
-                    # str.(required) language of the prompt text for the reference audio
-                    "top_k": 5,  # int. top k sampling
-                    "top_p": 1,  # float. top p sampling
-                    "temperature": 1,  # float. temperature for sampling
-                    "text_split_method": "cut0",  # str. text split method, see text_segmentation_method.py for details.
-                    "batch_size": 1,  # int. batch size for inference
-                    "batch_threshold": 0.75,  # float. threshold for batch splitting.
-                    "split_bucket": True,  # bool. whether to split the batch into multiple buckets.
-                    "return_fragment": False,  # bool. step by step return the audio fragment.
-                    "speed_factor": 1.0,  # float. control the speed of the synthesized audio.
-                    "fragment_interval": 0.3,  # float. to control the interval of the audio fragment.
-                    "seed": -1,  # int. random seed for reproducibility.
-                    "parallel_infer": True,  # bool. whether to use parallel inference.
-                    "repetition_penalty": 1.35  # float. repetition penalty for T2S model.
-                }
-
-                @retry(stop_max_attempt_number=retry_times)
-                def need_retry():
-                    try:
-                        output_wav = os.path.join(path_manager.translated_vocal_dir, f'{id}.wav')
-                        if os.path.exists(output_wav):
-                            audio_segment = AudioSegment.from_wav(output_wav)
-                            duration_ms = len(audio_segment)
-                            cost_time = (subtitle.get("end") - subtitle.get("start"))
-                            if duration_ms > cost_time:
-                                # 判断出来确实有必要修改一下配音速度，否则就直接跳过这个
-                                speed = (duration_ms / cost_time) + 0.1
-                                logging.info(f"检测到音频存在，压缩时长到{speed}")
-                                req["speed_factor"] = speed
-                            else:
-                                return
-                        tts_generator = tts_pipeline.run(req)
-                        sr, audio_data = next(tts_generator)
-                        sf.write(output_wav, audio_data, sr, format='wav')
+            @retry(stop_max_attempt_number=retry_times)
+            def need_retry():
+                try:
+                    output_wav = os.path.join(path_manager.translated_vocal_dir, f'{id}.wav')
+                    if os.path.exists(output_wav):
                         audio_segment = AudioSegment.from_wav(output_wav)
                         duration_ms = len(audio_segment)
                         cost_time = (subtitle.get("end") - subtitle.get("start"))
                         if duration_ms > cost_time:
-                            raise Exception("输出音频时长大于原音频，需要压缩时长")
-                    except Exception as err:
-                        logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
-                        raise err
-                try:
-                    need_retry()
-                except Exception as e:
-                    logging.error(f"TTS异常:{e}")
+                            # 判断出来确实有必要修改一下配音速度，否则就直接跳过这个
+                            speed = (duration_ms / cost_time) + 0.1
+                            logging.info(f"检测到音频存在，压缩时长到{speed}")
+                            req["speed_factor"] = speed
+                        else:
+                            return
+                    tts_generator = tts_pipeline.run(req)
+                    sr, audio_data = next(tts_generator)
+                    sf.write(output_wav, audio_data, sr, format='wav')
+                    audio_segment = AudioSegment.from_wav(output_wav)
+                    duration_ms = len(audio_segment)
+                    cost_time = (subtitle.get("end") - subtitle.get("start"))
+                    if duration_ms > cost_time:
+                        raise Exception("输出音频时长大于原音频，需要压缩时长")
+                except Exception as err:
+                    logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
+                    raise err
+            try:
+                need_retry()
+            except Exception as e:
+                logging.error(f"TTS异常:{e}")
 
     logging.info(
         f"""音频合成完成：【成功】{len(result_total["success"])}个 |【失败】{len(result_total["failed"])}个 |【压缩时间】{len(result_total["out_of_time"])}个""")
