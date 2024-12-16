@@ -41,15 +41,12 @@ class AudioPre:
         self.model = model
 
     def _path_audio_(
-        self, music_file, ins_root=None, vocal_root=None, format="flac", is_hp3=False
+        self, music_file, ins_path=None, vocal_path=None, format="wav"
     ):
-        if ins_root is None and vocal_root is None:
+        # Why: 为啥用 and 不用 or
+        if ins_path is None or vocal_path is None:
             return "No save root."
         name = os.path.basename(music_file)
-        if ins_root is not None:
-            os.makedirs(ins_root, exist_ok=True)
-        if vocal_root is not None:
-            os.makedirs(vocal_root, exist_ok=True)
         X_wave, y_wave, X_spec_s, y_spec_s = {}, {}, {}, {}
         bands_n = len(self.mp.param["band"])
         # print(bands_n)
@@ -110,10 +107,7 @@ class AudioPre:
         y_spec_m = pred * X_phase
         v_spec_m = X_spec_m - y_spec_m
 
-        if is_hp3 == True:
-            ins_root,vocal_root = vocal_root,ins_root
-
-        if ins_root is not None:
+        if ins_path is not None:
             if self.data["high_end_process"].startswith("mirroring"):
                 input_high_end_ = spec_utils.mirroring(
                     self.data["high_end_process"], y_spec_m, input_high_end, self.mp
@@ -124,41 +118,17 @@ class AudioPre:
             else:
                 wav_instrument = spec_utils.cmb_spectrogram_to_wave(y_spec_m, self.mp)
             logger.info("%s instruments done" % name)
-            if is_hp3 == True:
-                head = "vocal_"
-            else:
-                head = "instrument_"
-            if format in ["wav", "flac"]:
-                sf.write(
-                    os.path.join(
-                        ins_root,
-                        head + "{}_{}.{}".format(name, self.data["agg"], format),
-                    ),
-                    (np.array(wav_instrument) * 32768).astype("int16"),
-                    self.mp.param["sr"],
-                )  #
-            else:
-                path = os.path.join(
-                    ins_root, head + "{}_{}.wav".format(name, self.data["agg"])
-                )
-                sf.write(
-                    path,
-                    (np.array(wav_instrument) * 32768).astype("int16"),
-                    self.mp.param["sr"],
-                )
-                if os.path.exists(path):
-                    opt_format_path = path[:-4] + ".%s" % format
-                    os.system("ffmpeg -i %s -vn %s -q:a 2 -y" % (path, opt_format_path))
-                    if os.path.exists(opt_format_path):
-                        try:
-                            os.remove(path)
-                        except:
-                            pass
-        if vocal_root is not None:
-            if is_hp3 == True:
-                head = "instrument_"
-            else:
-                head = "vocal_"
+
+            if format != "wav":
+                raise Exception("format only support wav")
+            if os.path.exists(ins_path):
+                os.remove(ins_path)
+            sf.write(
+                ins_path,
+                (np.array(wav_instrument) * 32768).astype("int16"),
+                self.mp.param["sr"],
+            )
+        if vocal_path is not None:
             if self.data["high_end_process"].startswith("mirroring"):
                 input_high_end_ = spec_utils.mirroring(
                     self.data["high_end_process"], v_spec_m, input_high_end, self.mp
@@ -169,32 +139,16 @@ class AudioPre:
             else:
                 wav_vocals = spec_utils.cmb_spectrogram_to_wave(v_spec_m, self.mp)
             logger.info("%s vocals done" % name)
-            if format in ["wav", "flac"]:
-                sf.write(
-                    os.path.join(
-                        vocal_root,
-                        head + "{}_{}.{}".format(name, self.data["agg"], format),
-                    ),
-                    (np.array(wav_vocals) * 32768).astype("int16"),
-                    self.mp.param["sr"],
-                )
-            else:
-                path = os.path.join(
-                    vocal_root, head + "{}_{}.wav".format(name, self.data["agg"])
-                )
-                sf.write(
-                    path,
-                    (np.array(wav_vocals) * 32768).astype("int16"),
-                    self.mp.param["sr"],
-                )
-                if os.path.exists(path):
-                    opt_format_path = path[:-4] + ".%s" % format
-                    os.system("ffmpeg -i %s -vn %s -q:a 2 -y" % (path, opt_format_path))
-                    if os.path.exists(opt_format_path):
-                        try:
-                            os.remove(path)
-                        except:
-                            pass
+            if format != "wav":
+                raise Exception("format only support wav")
+
+            if os.path.exists(vocal_path):
+                os.remove(vocal_path)
+            sf.write(
+                vocal_path,
+                (np.array(wav_vocals) * 32768).astype("int16"),
+                self.mp.param["sr"],
+            )
 
 
 class AudioPreDeEcho:
@@ -225,7 +179,7 @@ class AudioPreDeEcho:
         self.model = model
 
     def _path_audio_(
-        self, music_file, vocal_root=None, ins_root=None, format="flac", is_hp3=False
+        self, music_file, vocal_root=None, ins_root=None, format="flac"
     ):  # 3个VR模型vocal和ins是反的
         if ins_root is None and vocal_root is None:
             return "No save root."
