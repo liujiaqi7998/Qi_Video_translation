@@ -12,13 +12,11 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import sys
 from pathlib import Path
-
 import langid
 import ffmpeg
 import torch
 import whisper
 from pydub import AudioSegment
-
 import config
 from tools.uvr5.vr import AudioPre
 
@@ -355,6 +353,22 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
         f"""音频合成完成：【成功】{len(result_total["success"])}个 |【失败】{len(result_total["failed"])}个 |【压缩时间】{len(result_total["out_of_time"])}个""")
 
 
+def deal_mix_voice(path_manager: PathManager, subtitles: dict):
+    for id, subtitle in subtitles.items():
+        translated_wav = os.path.join(path_manager.translated_vocal_dir, f'{id}.wav')
+        instrument_wav = os.path.join(path_manager.cut_instrument_dir, f'{id}.wav')
+        output_wav = os.path.join(path_manager.translated_mix_dir, f'{id}.wav')
+        if os.path.exists(output_wav):
+            continue
+        if not os.path.exists(translated_wav):
+            continue
+        translated_audio = AudioSegment.from_file(translated_wav)
+        background_audio = AudioSegment.from_file(instrument_wav)
+        mixed_audio = background_audio.overlay(translated_audio)
+        mixed_audio.export(output_wav, format="wav")
+        pass
+
+
 def main():
     path_manager = PathManager(TEMP_PATH)
     path_manager.create_directories()
@@ -399,6 +413,28 @@ def main():
     logging.info("TTS人声开始")
     deal_tts(path_manager, subtitles)
     logging.info("TTS人声结束")
+
+    logging.info("开始混音")
+    deal_mix_voice(path_manager, subtitles)
+    logging.info("混音结束")
+
+    logging.info("开始合并输出音频")
+
+    input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
+
+    for id, subtitle in subtitles.items():
+        if not os.path.exists(os.path.join(path_manager.translated_mix_dir, f'{id}.wav')):
+            continue
+        this_pic = AudioSegment.from_file(os.path.join(path_manager.translated_mix_dir, f'{id}.wav'))
+        start = subtitle.get("start")
+        end = subtitle.get("end")
+        input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
+
+    input_voice_audio.export(path_manager.output_voice_dir, format='wav')
+    logging.info("音频合成完成")
+
+    input_voice_audio.export(path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
+    logging.info("输出音频已压缩为MP3格式，方便传输测试")
 
 
 if __name__ == '__main__':
