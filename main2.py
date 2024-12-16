@@ -1,11 +1,11 @@
 import json
-import logging
 import os
 import re
 import tempfile
-
+from loguru import logger
 import pysubs2
 from retrying import retry
+
 from utils.file_path import PathManager
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -27,10 +27,8 @@ sys.path.append(f"{BASE_DIR}/GPT_SoVITS")
 import soundfile as sf
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
-from pyannote.audio import Pipeline as pyannote_Pipeline
-
-pyannote_pipeline = pyannote_Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
-                                                      use_auth_token="HUGGINGFACE_ACCESS_TOKEN_GOES_HERE")
+from pyannote.audio import Model as pyannote_Model
+from pyannote.audio import Inference as pyannote_Inference
 
 # 人声提取激进程度 0-20，默认10
 agg = 10
@@ -41,16 +39,15 @@ retry_times = 5
 # log_level = 'DEBUG'
 log_level = 'INFO'
 
-logging.basicConfig(format='%(asctime)s - %(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s',
-                    level=log_level)
+
 
 cut_method_names = get_cut_method_names()
 config_path = os.path.join(BASE_DIR, "GPT_SoVITS/configs/tts_infer.yaml")
 tts_config = TTS_Config(config_path)
-logging.debug(f"\n{tts_config}")
+logger.debug(f"\n{tts_config}")
 tts_pipeline = TTS(tts_config)
 
-logging.info(f"程序启动成功，运行目录是：{BASE_DIR}")
+logger.info(f"程序启动成功，运行目录是：{BASE_DIR}")
 
 
 def init_video(path_manager: PathManager):
@@ -75,7 +72,7 @@ def deal_subtitles(path_manager: PathManager):
             if not language:
                 continue
             if not (output_language in language[0]):
-                logging.info(f"检测到的语言与目标语言不一致：{event.plaintext}")
+                logger.info(f"检测到的语言与目标语言不一致：{event.plaintext}")
                 continue
             if not use_subs_style.get(event.style):
                 use_subs_style[event.style] = 1
@@ -84,14 +81,14 @@ def deal_subtitles(path_manager: PathManager):
         pass
     # 利用 max() 函数找到得分最高的项
     most_use_style = max(use_subs_style, key=use_subs_style.get)
-    logging.info(f"字幕得使用率最高的style是: {most_use_style}，得分为: {use_subs_style[most_use_style]}")
+    logger.info(f"字幕得使用率最高的style是: {most_use_style}，得分为: {use_subs_style[most_use_style]}")
     subtitles = {}
     start_id = 0
     for event in subs.events:
         if event.plaintext and event.style == most_use_style:
             pattern = r"(www.|http|字幕组)"
             if re.search(pattern, event.plaintext):
-                logging.info(f"无意义字幕组: {event.plaintext}")
+                logger.info(f"无意义字幕组: {event.plaintext}")
                 continue
             # 解决一下字幕包含括号注解问题，如果发现这个字幕完全是个注释那么直接跳过处理
             event.plaintext = re.sub(r'\(.*?\)', '', event.plaintext)
@@ -113,12 +110,79 @@ def deal_cut_video(path_manager: PathManager, subtitles: dict):
         output_path = os.path.join(path_manager.cut_asr_raw_dir, f"{id}.wav")
         if not os.path.exists(output_path):
             if subtitle.get('end') - subtitle.get('start') < 1000:
-                logging.info(f"{subtitle.get('id')}: {subtitle.get('text')} 小于1秒，忽略采集")
+                logger.info(f"{subtitle.get('id')}: {subtitle.get('text')} 小于1秒，忽略采集")
                 continue
             input_wav_audio[subtitle.get('start'):subtitle.get('end')].export(output_path, format='wav')
         subtitles[id]["is_cut"] = True
         pass
     return subtitles
+
+
+def deal_uvr_all_video(path_manager: PathManager):
+    pre_fun = None
+    try:
+        pre_fun = AudioPre(
+            agg=agg,
+            model_path=os.path.join(BASE_DIR, config.uvr5_weights_path, "HP5_only_main_vocal.pth"),
+            device=config.infer_device,
+            is_half=config.is_half,
+        )
+
+        audio = AudioSegment.from_file(path_manager.input_voice_dir)
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_mono_list = audio.split_to_mono()
+            j = 0
+            for one_mono in audio_mono_list:
+                music_file = os.path.join(tmp, f"{j}.wav")
+                ins_path_file = os.path.join(tmp, f"{j}_ins.wav")
+                vocal_path_file = os.path.join(tmp, f"{j}_vocal.wav")
+                logger.info(f"【{j}声道】开始导出数据，请等待")
+                one_mono.export(music_file)
+                if not os.path.exists(music_file):
+                    raise Exception(f"【{j}声道】导出异常，文件没有成功写出")
+
+                logger.info(f"【{j}声道】全视频人声分离开始，这个过程需要数分钟，请耐心等待")
+                pre_fun._path_audio_(
+                    music_file=music_file,
+                    ins_path=ins_path_file,
+                    vocal_path=vocal_path_file,
+                )
+                if (not os.path.exists(ins_path_file)) or (not os.path.exists(vocal_path_file)):
+                    raise Exception(f"【{j}声道】分离失败，文件没有成功写出")
+                j = j + 1
+
+            u_ins_audio = []
+            u_vocal_audio = []
+            for m in range(j):
+                ins_path_file = os.path.join(tmp, f"{m}_ins.wav")
+                vocal_path_file = os.path.join(tmp, f"{m}_vocal.wav")
+                l_ins_audio, r_ins_audio = AudioSegment.from_file(ins_path_file).split_to_mono()
+                if l_ins_audio.rms < r_ins_audio.rms:
+                    u_ins_audio.append(l_ins_audio)
+                else:
+                    u_ins_audio.append(r_ins_audio)
+                l_vocal_audio, r_vocal_audio = AudioSegment.from_file(vocal_path_file).split_to_mono()
+                # 防止爆音 选择能量低的一组
+                if l_vocal_audio.rms < r_vocal_audio.rms:
+                    u_vocal_audio.append(l_vocal_audio)
+                else:
+                    u_vocal_audio.append(r_vocal_audio)
+
+            AudioSegment.from_mono_audiosegments(*u_ins_audio).export(path_manager.instrument_dir)
+            AudioSegment.from_mono_audiosegments(*u_vocal_audio).export(path_manager.vocal_dir)
+    except Exception as err:
+        logger.error(err)
+    finally:
+        try:
+            if pre_fun:
+                del pre_fun.model
+                del pre_fun
+        except Exception as err:
+            logger.error(f"uvr5异常：{err}")
+        logger.info("clean_empty_cache")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return
 
 
 def deal_uvr_video(path_manager: PathManager, subtitles: dict):
@@ -143,7 +207,7 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
             @retry(stop_max_attempt_number=retry_times)
             def need_retry():
                 try:
-                    logging.info(f"【提取人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
+                    logger.info(f"【提取人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
                     audio = AudioSegment.from_file(input_path)
                     with tempfile.TemporaryDirectory() as tmp:
                         audio_mono_list = audio.split_to_mono()
@@ -189,27 +253,27 @@ def deal_uvr_video(path_manager: PathManager, subtitles: dict):
                         raise Exception("人声分离没有产出文件")
 
                 except Exception as err:
-                    logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
+                    logger.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
                     raise err
 
             try:
                 need_retry()
             except Exception as err:
-                logging.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
+                logger.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
                 continue
 
             subtitles[id]["is_uvr"] = True
 
     except Exception as err:
-        logging.error(err)
+        logger.error(err)
     finally:
         try:
             if pre_fun:
                 del pre_fun.model
                 del pre_fun
         except Exception as err:
-            logging.error(f"uvr5异常：{err}")
-        logging.info("clean_empty_cache")
+            logger.error(f"uvr5异常：{err}")
+        logger.info("clean_empty_cache")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return subtitles
@@ -229,7 +293,7 @@ def deal_asr(path_manager: PathManager, subtitles: dict):
             vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
 
             if subtitle.get('end') - subtitle.get('start') > 9000:
-                logging.info(f"{subtitle.get('id')}: {subtitle.get('text')} 大于9秒，强制9秒截断")
+                logger.info(f"{subtitle.get('id')}: {subtitle.get('text')} 大于9秒，强制9秒截断")
                 audio_segment = AudioSegment.from_wav(vocal_path)
                 vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}_9s.wav")
                 audio_segment[subtitle.get('start'):subtitle.get('start') + 9000].export(vocal_path)
@@ -241,44 +305,47 @@ def deal_asr(path_manager: PathManager, subtitles: dict):
             @retry(stop_max_attempt_number=retry_times)
             def need_retry():
                 try:
-                    logging.info(f"【ASR人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
+                    logger.info(f"【ASR人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
                     asr_result = asr_model.transcribe(vocal_path, language=input_language, initial_prompt=None)
                     if not (input_language in asr_result.get('language')):
-                        logging.info(
+                        logger.info(
                             f"检测到的语言与目标语言不一致：{subtitle.get('id')}: {subtitle.get('text')}: {asr_result.get('language')}")
                         return
                     subtitles[id]["asr_result"] = asr_result
                 except Exception as err:
-                    logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
+                    logger.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
                     raise err
 
             try:
                 need_retry()
             except Exception as err:
-                logging.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
+                logger.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
                 continue
     except Exception as err:
-        logging.error(err)
+        logger.error(err)
     finally:
         try:
             if asr_model:
                 del asr_model
         except Exception as err:
-            logging.error(f"asr异常：{err}")
-        logging.info("clean_empty_cache")
+            logger.error(f"asr异常：{err}")
+        logger.info("clean_empty_cache")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return subtitles
 
 
 def deal_tts(path_manager: PathManager, subtitles: dict):
+    pyannote_model = pyannote_Model.from_pretrained("pyannote/wespeaker-voxceleb-resnet34-LM")
+    inference = pyannote_Inference(pyannote_model, window="whole")
     result_total = {
         "success": [],
         "failed": [],
         "out_of_time": []
     }
-
-    for id, subtitle in subtitles.items():
+    x = 0
+    subtitles_items = list(subtitles.items())
+    for id, subtitle in subtitles_items:
         if subtitle.get("is_tts"):
             continue
 
@@ -294,13 +361,69 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
                 # 解决 ref_audio_path 音频不存在问题
                 continue
 
+            raw_audio_segment = AudioSegment.from_file(ref_audio_path)
+
+            max_find_count = 5
+            similarity_value = 1
+            raw_audio_segment_len = len(raw_audio_segment)
+            prompt_text = asr_result.get('text')
+
+            # if raw_audio_segment_len <= 3000:
+            #     all_voice_data = [(id, subtitle)]
+            #     embedding1 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")).reshape(1,-1)
+            #     # 输入采样音频小于3秒，需要上下查找拼接一下
+            #     for i in range(max_find_count):
+            #         # 先向下查找 + 1
+            #         next_id = x + (i + 1)
+            #         if 0 < next_id < len(subtitles_items) - 1:
+            #             t_id, last_subtitles_item = subtitles_items[next_id]
+            #             if os.path.exists(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")):
+            #                 # 解决音频不存在问题
+            #                 embedding2 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")).reshape(1,-1)
+            #                 distance = cdist(embedding1, embedding2, metric="cosine")[0, 0]
+            #                 if distance > similarity_value:
+            #                     all_voice_data.append((t_id, last_subtitles_item))
+            #
+            #         all_time_test = 0
+            #         for t_id, last_subtitles_item in all_voice_data:
+            #             all_time_test = all_time_test + len(AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")))
+            #         if all_time_test > 3000:
+            #             break
+            #
+            #         # 再向上插在 - 1
+            #         last_id = x - (1 + 1)
+            #         if 0 < last_id < len(subtitles_items) - 1:
+            #             t_id, last_subtitles_item = subtitles_items[last_id]
+            #             if os.path.exists(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")):
+            #                 # 解决音频不存在问题
+            #                 embedding2 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")).reshape(1,-1)
+            #                 distance = cdist(embedding1, embedding2, metric="cosine")[0, 0]
+            #                 if distance > similarity_value:
+            #                     all_voice_data.append((t_id, last_subtitles_item))
+            #
+            #         all_time_test = 0
+            #         for t_id, last_subtitles_item in all_voice_data:
+            #             all_time_test = all_time_test + len(
+            #                 AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")))
+            #         if all_time_test > 3000:
+            #             break
+            #     prompt_text = ""
+            #     all_audio = None
+            #     for t_id, last_subtitles_item in all_voice_data:
+            #         prompt_text = prompt_text + asr_result.get('text')
+            #         if not all_audio:
+            #             all_audio = AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav"))
+            #         else:
+            #             all_audio = all_audio + AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav"))
+            #     all_audio.export(os.path.join(path_manager.cache_dir, f"{id}.wav"))
+
             req = {
                 "text": subtitle.get("text"),  # str.(required) text to be synthesized
                 "text_lang": output_language,  # str.(required) language of the text to be synthesized
                 "ref_audio_path": ref_audio_path,  # str.(required) reference audio path
                 "aux_ref_audio_paths": [],
                 # list.(optional) auxiliary reference audio paths for multi-speaker tone fusion
-                "prompt_text": asr_result.get('text'),  # str.(optional) prompt text for the reference audio
+                "prompt_text": prompt_text,  # str.(optional) prompt text for the reference audio
                 "prompt_lang": asr_result.get('language'),
                 # str.(required) language of the prompt text for the reference audio
                 "top_k": 5,  # int. top k sampling
@@ -329,7 +452,7 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
                         if duration_ms > cost_time:
                             # 判断出来确实有必要修改一下配音速度，否则就直接跳过这个
                             speed = (duration_ms / cost_time) + 0.1
-                            logging.info(f"检测到音频存在，压缩时长到{speed}")
+                            logger.info(f"检测到音频存在，压缩时长到{speed}")
                             req["speed_factor"] = speed
                         else:
                             return
@@ -342,14 +465,15 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
                     if duration_ms > cost_time:
                         raise Exception("输出音频时长大于原音频，需要压缩时长")
                 except Exception as err:
-                    logging.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
+                    logger.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
                     raise err
+
             try:
                 need_retry()
             except Exception as e:
-                logging.error(f"TTS异常:{e}")
-
-    logging.info(
+                logger.error(f"TTS异常:{e}")
+        x = x + 1
+    logger.info(
         f"""音频合成完成：【成功】{len(result_total["success"])}个 |【失败】{len(result_total["failed"])}个 |【压缩时间】{len(result_total["out_of_time"])}个""")
 
 
@@ -374,11 +498,11 @@ def main():
     path_manager.create_directories()
 
     # 第一步，利用ffmpeg将视频的音频提取出来
-    logging.info("ffmpeg，提取视频音频开始")
+    logger.info("ffmpeg，提取视频音频开始")
     init_video(path_manager)
-    logging.info("ffmpeg，提取视频音频结束")
+    logger.info("ffmpeg，提取视频音频结束")
 
-    logging.info("字幕处理开始")
+    logger.info("字幕处理开始")
     subtitles = {}
     if not os.path.exists(path_manager.subtitles_result_dir):
         subtitles = deal_subtitles(path_manager)
@@ -390,35 +514,36 @@ def main():
         with open(path_manager.subtitles_result_dir, "r", encoding="utf-8") as f:
             subtitles = json.load(f)
 
-    logging.info("字幕处理结束")
+    logger.info("字幕处理结束")
 
-    logging.info("音频与字幕剪切开始")
+    logger.info("音频与字幕剪切开始")
     subtitles = deal_cut_video(path_manager, subtitles)
     with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
         json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logging.info("音频与字幕剪切完成")
+    logger.info("音频与字幕剪切完成")
 
-    logging.info("音频分离人声开始")
+    logger.info("音频分离人声开始")
+    deal_uvr_all_video(path_manager)
     subtitles = deal_uvr_video(path_manager, subtitles)
     with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
         json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logging.info("音频分离人声完成")
+    logger.info("音频分离人声完成")
 
-    logging.info("ASR人声开始")
+    logger.info("ASR人声开始")
     subtitles = deal_asr(path_manager, subtitles)
     with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
         json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logging.info("ASR人声完成")
+    logger.info("ASR人声完成")
 
-    logging.info("TTS人声开始")
+    logger.info("TTS人声开始")
     deal_tts(path_manager, subtitles)
-    logging.info("TTS人声结束")
+    logger.info("TTS人声结束")
 
-    logging.info("开始混音")
+    logger.info("开始混音")
     deal_mix_voice(path_manager, subtitles)
-    logging.info("混音结束")
+    logger.info("混音结束")
 
-    logging.info("开始合并输出音频")
+    logger.info("开始合并输出音频")
 
     input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
 
@@ -431,10 +556,10 @@ def main():
         input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
 
     input_voice_audio.export(path_manager.output_voice_dir, format='wav')
-    logging.info("音频合成完成")
+    logger.info("音频合成完成")
 
     input_voice_audio.export(path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
-    logging.info("输出音频已压缩为MP3格式，方便传输测试")
+    logger.info("输出音频已压缩为MP3格式，方便传输测试")
 
 
 if __name__ == '__main__':

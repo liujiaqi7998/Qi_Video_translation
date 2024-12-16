@@ -11,10 +11,9 @@ class PathManager:
     output.wav          输出音频
     output.mp4          输出视频
     subtitles.ass       视频字幕
+    instrument.wav      原视频背景音乐
+    vocal.wav           原视频视频人声
     - cache             缓存
-    - uvr5
-          - instrument  背景音乐
-          - vocal       视频人声
     - cut
           - instrument  背景音乐切片音频
           - vocal       视频人声切片音频
@@ -32,6 +31,10 @@ class PathManager:
         # Initialize all paths
         self.input_video_dir = os.path.join(base_path, "input.mp4")
         self.input_voice_dir = os.path.join(base_path, "input.wav")
+
+        self.instrument_dir = os.path.join(base_path, "instrument.wav")
+        self.vocal_dir = os.path.join(base_path, "vocal.wav")
+
         self.subtitles_dir = os.path.join(base_path, "subtitles.ass")
 
         self.output_video_dir = os.path.join(base_path, "output.mp4")
@@ -45,9 +48,6 @@ class PathManager:
         self.pyannote_result_dir = os.path.join(base_path, "pyannote.json")
         self.speaker_result_dir = os.path.join(base_path, "speaker.json")
 
-        self.uvr5_instrument_dir = os.path.join(base_path, "uvr5", "instrument")
-        self.uvr5_vocal_dir = os.path.join(base_path, "uvr5", "vocal")
-
         self.speakers_dir = os.path.join(base_path, "speakers")
         self.cache_dir = os.path.join(base_path, "cache")
         self.cut_instrument_dir = os.path.join(base_path, "cut", "instrument")
@@ -58,8 +58,6 @@ class PathManager:
         self.translated_mix_dir = os.path.join(base_path, "translated", "mix")
 
         self.directories_to_create = [
-            self.uvr5_instrument_dir,
-            self.uvr5_vocal_dir,
             self.cut_instrument_dir,
             self.cut_asr_vocal_dir,
             self.cut_asr_raw_dir,
