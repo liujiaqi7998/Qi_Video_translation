@@ -375,7 +375,7 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
 
 def deal_mix_voice(path_manager: PathManager, subtitles: dict):
     for id, subtitle in subtitles.items():
-        translated_wav = os.path.join(path_manager.cut_tts_dir, f'{id}.wav')
+        translated_wav = os.path.join(path_manager.cut_fix_dir, f'{id}.wav')
         instrument_wav = os.path.join(path_manager.cut_instrument_dir, f'{id}.wav')
         output_wav = os.path.join(path_manager.cut_mix_dir, f'{id}.wav')
         if os.path.exists(output_wav):
@@ -387,6 +387,34 @@ def deal_mix_voice(path_manager: PathManager, subtitles: dict):
         mixed_audio = background_audio.overlay(translated_audio)
         mixed_audio.export(output_wav, format="wav")
         pass
+
+
+def deal_fix_video(path_manager: PathManager, subtitles: dict):
+    try:
+        # 这里进行人声处理
+        with tempfile.TemporaryDirectory() as tmp:
+            count = 0
+            for id, subtitle in subtitles.items():
+                tts_path = os.path.join(path_manager.cut_tts_dir, f"{id}.wav")
+                if not os.path.exists(tts_path):
+                    continue
+                fix_path = os.path.join(path_manager.cut_fix_dir, f"{id}.wav")
+                if os.path.exists(fix_path):
+                    continue
+                shutil.copyfile(tts_path, os.path.join(tmp, f"{id}.wav"))
+                count = count + 1
+            logger.info(f"一共{count}个音频需要提取人声")
+            if count > 0:
+                os.system(f"{config.resemble_enhance_cmd} {tmp} {path_manager.cut_fix_dir}")
+            logger.info(f"语音修复完成")
+    except Exception as err:
+        logger.error(err)
+    finally:
+        logger.info("释放torch.cuda")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return subtitles
+
 
 
 def main():
@@ -433,6 +461,10 @@ def main():
     logger.info("TTS人声开始")
     deal_tts(path_manager, subtitles)
     logger.info("TTS人声结束")
+
+    logger.info("高清修复开始")
+    deal_fix_video(path_manager, subtitles)
+    logger.info("高清修复结束")
 
     logger.info("开始混音")
     deal_mix_voice(path_manager, subtitles)
