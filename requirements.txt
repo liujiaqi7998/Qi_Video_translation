@@ -36,4 +36,4 @@ loguru
 pysubs2
 retrying
 langid
-streamlit
+gradio>=4.0,<=4.24.0
