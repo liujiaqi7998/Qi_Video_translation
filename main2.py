@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import tempfile
 from loguru import logger
 import pysubs2
@@ -27,8 +28,6 @@ sys.path.append(f"{BASE_DIR}/GPT_SoVITS")
 import soundfile as sf
 from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
 from GPT_SoVITS.TTS_infer_pack.text_segmentation_method import get_method_names as get_cut_method_names
-from pyannote.audio import Model as pyannote_Model
-from pyannote.audio import Inference as pyannote_Inference
 
 # 人声提取激进程度 0-20，默认10
 agg = 10
@@ -120,6 +119,10 @@ def deal_cut_video(path_manager: PathManager, subtitles: dict):
 
 def deal_uvr_all_video(path_manager: PathManager):
     pre_fun = None
+
+    if os.path.exists(path_manager.instrument_dir) and os.path.exists(path_manager.vocal_dir):
+        return
+
     try:
         pre_fun = AudioPre(
             agg=agg,
@@ -179,101 +182,48 @@ def deal_uvr_all_video(path_manager: PathManager):
                 del pre_fun
         except Exception as err:
             logger.error(f"uvr5异常：{err}")
-        logger.info("clean_empty_cache")
+        logger.info("释放torch.cuda")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return
 
 
 def deal_uvr_video(path_manager: PathManager, subtitles: dict):
-    pre_fun = None
     try:
-        pre_fun = AudioPre(
-            agg=agg,
-            model_path=os.path.join(BASE_DIR, config.uvr5_weights_path, "HP5_only_main_vocal.pth"),
-            device=config.infer_device,
-            is_half=config.is_half,
-        )
+        if not os.path.exists(path_manager.instrument_dir):
+            raise Exception("没有有效的背景音频文件，可能是上一步人声分离失败")
 
-        for id, subtitle in subtitles.items():
-            input_path = os.path.join(path_manager.cut_asr_raw_dir, f"{id}.wav")
-            vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
-            instrument_path = os.path.join(path_manager.cut_instrument_dir, f"{id}.wav")
-            if not os.path.exists(input_path):
-                continue
-            if os.path.exists(vocal_path) and os.path.exists(instrument_path):
-                continue
+        instrument_audio = AudioSegment.from_file(path_manager.instrument_dir)
 
-            @retry(stop_max_attempt_number=retry_times)
-            def need_retry():
-                try:
-                    logger.info(f"【提取人声处理】{subtitle.get('id')}: {subtitle.get('text')}")
-                    audio = AudioSegment.from_file(input_path)
-                    with tempfile.TemporaryDirectory() as tmp:
-                        audio_mono_list = audio.split_to_mono()
-                        j = 0
-                        for one_mono in audio_mono_list:
-                            music_file = os.path.join(tmp, f"{j}.wav")
-                            ins_path_file = os.path.join(tmp, f"{j}_ins.wav")
-                            vocal_path_file = os.path.join(tmp, f"{j}_vocal.wav")
-
-                            one_mono.export(music_file)
-                            if not os.path.exists(music_file):
-                                raise Exception(f"{j} 声道导出异常，文件没有成功写出")
-                            pre_fun._path_audio_(
-                                music_file=music_file,
-                                ins_path=ins_path_file,
-                                vocal_path=vocal_path_file,
-                            )
-                            if (not os.path.exists(ins_path_file)) or (not os.path.exists(vocal_path_file)):
-                                raise Exception(f"{j} 声道分离失败，文件没有成功写出")
-                            j = j + 1
-
-                        u_ins_audio = []
-                        u_vocal_audio = []
-                        for m in range(j):
-                            ins_path_file = os.path.join(tmp, f"{m}_ins.wav")
-                            vocal_path_file = os.path.join(tmp, f"{m}_vocal.wav")
-                            l_ins_audio, r_ins_audio = AudioSegment.from_file(ins_path_file).split_to_mono()
-                            if l_ins_audio.rms < r_ins_audio.rms:
-                                u_ins_audio.append(l_ins_audio)
-                            else:
-                                u_ins_audio.append(r_ins_audio)
-                            l_vocal_audio, r_vocal_audio = AudioSegment.from_file(vocal_path_file).split_to_mono()
-                            # 防止爆音 选择能量低的一组
-                            if l_vocal_audio.rms < r_vocal_audio.rms:
-                                u_vocal_audio.append(l_vocal_audio)
-                            else:
-                                u_vocal_audio.append(r_vocal_audio)
-
-                        AudioSegment.from_mono_audiosegments(*u_ins_audio).export(instrument_path)
-                        AudioSegment.from_mono_audiosegments(*u_vocal_audio).export(vocal_path)
-
-                    if (not os.path.exists(vocal_path)) or (not os.path.exists(instrument_path)):
-                        raise Exception("人声分离没有产出文件")
-
-                except Exception as err:
-                    logger.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
-                    raise err
-
-            try:
-                need_retry()
-            except Exception as err:
-                logger.error(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}")
-                continue
-
-            subtitles[id]["is_uvr"] = True
+        # 这里进行人声处理
+        with tempfile.TemporaryDirectory() as tmp:
+            count = 0
+            for id, subtitle in subtitles.items():
+                vocal_path = os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")
+                raw_path = os.path.join(path_manager.cut_asr_raw_dir, f"{id}.wav")
+                if os.path.exists(vocal_path):
+                    continue
+                if not os.path.exists(raw_path):
+                    continue
+                shutil.copyfile(raw_path, os.path.join(tmp, f"{id}.wav"))
+                count = count + 1
+            logger.info(f"一共{count}个音频需要提取人声")
+            if count > 0:
+                os.system(f"{config.resemble_enhance_cmd} {tmp} {path_manager.cut_asr_vocal_dir}")
+            logger.info(f"人声提取完成")
+            # 背景音频裁切
+            for id, subtitle in subtitles.items():
+                instrument_path = os.path.join(path_manager.cut_instrument_dir, f"{id}.wav")
+                if os.path.exists(instrument_path):
+                    continue
+                instrument_audio[subtitle.get('start'):subtitle.get('end')].export(instrument_path)
+                if os.path.exists(instrument_path):
+                    subtitles[id]["is_uvr"] = True
 
     except Exception as err:
         logger.error(err)
     finally:
-        try:
-            if pre_fun:
-                del pre_fun.model
-                del pre_fun
-        except Exception as err:
-            logger.error(f"uvr5异常：{err}")
-        logger.info("clean_empty_cache")
+        logger.info("释放torch.cuda")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return subtitles
@@ -329,15 +279,13 @@ def deal_asr(path_manager: PathManager, subtitles: dict):
                 del asr_model
         except Exception as err:
             logger.error(f"asr异常：{err}")
-        logger.info("clean_empty_cache")
+        logger.info("释放torch.cuda")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return subtitles
 
 
 def deal_tts(path_manager: PathManager, subtitles: dict):
-    pyannote_model = pyannote_Model.from_pretrained("pyannote/wespeaker-voxceleb-resnet34-LM")
-    inference = pyannote_Inference(pyannote_model, window="whole")
     result_total = {
         "success": [],
         "failed": [],
@@ -361,61 +309,7 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
                 # 解决 ref_audio_path 音频不存在问题
                 continue
 
-            raw_audio_segment = AudioSegment.from_file(ref_audio_path)
-
-            max_find_count = 5
-            similarity_value = 1
-            raw_audio_segment_len = len(raw_audio_segment)
             prompt_text = asr_result.get('text')
-
-            # if raw_audio_segment_len <= 3000:
-            #     all_voice_data = [(id, subtitle)]
-            #     embedding1 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{id}.wav")).reshape(1,-1)
-            #     # 输入采样音频小于3秒，需要上下查找拼接一下
-            #     for i in range(max_find_count):
-            #         # 先向下查找 + 1
-            #         next_id = x + (i + 1)
-            #         if 0 < next_id < len(subtitles_items) - 1:
-            #             t_id, last_subtitles_item = subtitles_items[next_id]
-            #             if os.path.exists(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")):
-            #                 # 解决音频不存在问题
-            #                 embedding2 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")).reshape(1,-1)
-            #                 distance = cdist(embedding1, embedding2, metric="cosine")[0, 0]
-            #                 if distance > similarity_value:
-            #                     all_voice_data.append((t_id, last_subtitles_item))
-            #
-            #         all_time_test = 0
-            #         for t_id, last_subtitles_item in all_voice_data:
-            #             all_time_test = all_time_test + len(AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")))
-            #         if all_time_test > 3000:
-            #             break
-            #
-            #         # 再向上插在 - 1
-            #         last_id = x - (1 + 1)
-            #         if 0 < last_id < len(subtitles_items) - 1:
-            #             t_id, last_subtitles_item = subtitles_items[last_id]
-            #             if os.path.exists(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")):
-            #                 # 解决音频不存在问题
-            #                 embedding2 = inference(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")).reshape(1,-1)
-            #                 distance = cdist(embedding1, embedding2, metric="cosine")[0, 0]
-            #                 if distance > similarity_value:
-            #                     all_voice_data.append((t_id, last_subtitles_item))
-            #
-            #         all_time_test = 0
-            #         for t_id, last_subtitles_item in all_voice_data:
-            #             all_time_test = all_time_test + len(
-            #                 AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav")))
-            #         if all_time_test > 3000:
-            #             break
-            #     prompt_text = ""
-            #     all_audio = None
-            #     for t_id, last_subtitles_item in all_voice_data:
-            #         prompt_text = prompt_text + asr_result.get('text')
-            #         if not all_audio:
-            #             all_audio = AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav"))
-            #         else:
-            #             all_audio = all_audio + AudioSegment.from_file(os.path.join(path_manager.cut_asr_vocal_dir, f"{t_id}.wav"))
-            #     all_audio.export(os.path.join(path_manager.cache_dir, f"{id}.wav"))
 
             req = {
                 "text": subtitle.get("text"),  # str.(required) text to be synthesized
@@ -444,7 +338,7 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
             @retry(stop_max_attempt_number=retry_times)
             def need_retry():
                 try:
-                    output_wav = os.path.join(path_manager.translated_vocal_dir, f'{id}.wav')
+                    output_wav = os.path.join(path_manager.cut_tts_dir, f'{id}.wav')
                     if os.path.exists(output_wav):
                         audio_segment = AudioSegment.from_wav(output_wav)
                         duration_ms = len(audio_segment)
@@ -463,7 +357,9 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
                     duration_ms = len(audio_segment)
                     cost_time = (subtitle.get("end") - subtitle.get("start"))
                     if duration_ms > cost_time:
+                        result_total["out_of_time"].append(id)
                         raise Exception("输出音频时长大于原音频，需要压缩时长")
+                    result_total["success"].append(id)
                 except Exception as err:
                     logger.warning(f"处理{subtitle.get('id')}: {subtitle.get('text')} 发生异常:{err}，触发重试")
                     raise err
@@ -479,12 +375,12 @@ def deal_tts(path_manager: PathManager, subtitles: dict):
 
 def deal_mix_voice(path_manager: PathManager, subtitles: dict):
     for id, subtitle in subtitles.items():
-        translated_wav = os.path.join(path_manager.translated_vocal_dir, f'{id}.wav')
+        translated_wav = os.path.join(path_manager.cut_tts_dir, f'{id}.wav')
         instrument_wav = os.path.join(path_manager.cut_instrument_dir, f'{id}.wav')
-        output_wav = os.path.join(path_manager.translated_mix_dir, f'{id}.wav')
+        output_wav = os.path.join(path_manager.cut_mix_dir, f'{id}.wav')
         if os.path.exists(output_wav):
             continue
-        if not os.path.exists(translated_wav):
+        if (not os.path.exists(translated_wav)) or (not os.path.exists(instrument_wav)):
             continue
         translated_audio = AudioSegment.from_file(translated_wav)
         background_audio = AudioSegment.from_file(instrument_wav)
@@ -503,7 +399,6 @@ def main():
     logger.info("ffmpeg，提取视频音频结束")
 
     logger.info("字幕处理开始")
-    subtitles = {}
     if not os.path.exists(path_manager.subtitles_result_dir):
         subtitles = deal_subtitles(path_manager)
         if not subtitles:
@@ -548,9 +443,9 @@ def main():
     input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
 
     for id, subtitle in subtitles.items():
-        if not os.path.exists(os.path.join(path_manager.translated_mix_dir, f'{id}.wav')):
+        if not os.path.exists(os.path.join(path_manager.cut_mix_dir, f'{id}.wav')):
             continue
-        this_pic = AudioSegment.from_file(os.path.join(path_manager.translated_mix_dir, f'{id}.wav'))
+        this_pic = AudioSegment.from_file(os.path.join(path_manager.cut_mix_dir, f'{id}.wav'))
         start = subtitle.get("start")
         end = subtitle.get("end")
         input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]

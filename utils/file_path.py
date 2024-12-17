@@ -16,12 +16,11 @@ class PathManager:
     - cache             缓存
     - cut
           - instrument  背景音乐切片音频
-          - vocal       视频人声切片音频
-    - translated
-          - vocal       人声翻译音频音频
+          - raw         原始音频根据字幕分片
+          - vocal_asr   分片提取的人声
+          - tts         人声翻译音频音频
           - mix         背景音乐切片
-    - speakers
-          - 1.wav       讲述人
+          - fix         人声翻译音频音频高清修复
     '''
 
 
@@ -48,23 +47,24 @@ class PathManager:
         self.pyannote_result_dir = os.path.join(base_path, "pyannote.json")
         self.speaker_result_dir = os.path.join(base_path, "speaker.json")
 
-        self.speakers_dir = os.path.join(base_path, "speakers")
         self.cache_dir = os.path.join(base_path, "cache")
+
         self.cut_instrument_dir = os.path.join(base_path, "cut", "instrument")
         self.cut_asr_vocal_dir = os.path.join(base_path, "cut", "vocal_asr")
         self.cut_asr_raw_dir = os.path.join(base_path, "cut", "raw")
+        self.cut_tts_dir = os.path.join(base_path, "cut", "tts")
+        self.cut_mix_dir = os.path.join(base_path, "cut", "mix")
+        self.cut_fix_dir = os.path.join(base_path, "cut", "fix")
 
-        self.translated_vocal_dir = os.path.join(base_path, "translated", "vocal")
-        self.translated_mix_dir = os.path.join(base_path, "translated", "mix")
 
         self.directories_to_create = [
             self.cut_instrument_dir,
             self.cut_asr_vocal_dir,
             self.cut_asr_raw_dir,
-            self.translated_vocal_dir,
-            self.translated_mix_dir,
-            self.speakers_dir,
-            self.cache_dir
+            self.cache_dir,
+            self.cut_tts_dir,
+            self.cut_mix_dir,
+            self.cut_fix_dir
         ]
 
     def create_directories(self):
