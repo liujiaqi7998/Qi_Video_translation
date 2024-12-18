@@ -6,8 +6,14 @@ import tempfile
 from loguru import logger
 import pysubs2
 from retrying import retry
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from utils.cut_video import CutVideo
+from utils.db_utils import Base, MainData
 from utils.file_path import PathManager
+from utils.speaker_separation import deal_uvr_all_video, SpeakerSeparation
+from utils.subtitles_extraction import SubtitlesExtraction
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -38,8 +44,6 @@ retry_times = 5
 # log_level = 'DEBUG'
 log_level = 'INFO'
 
-
-
 cut_method_names = get_cut_method_names()
 config_path = os.path.join(BASE_DIR, "GPT_SoVITS/configs/tts_infer.yaml")
 tts_config = TTS_Config(config_path)
@@ -58,134 +62,6 @@ def init_video(path_manager: PathManager):
 
     if not os.path.exists(path_manager.input_voice_dir):
         raise FileNotFoundError(f"指定的音频文件不存在: {path_manager.input_voice_dir}，可能是ffmpeg提取视频音频失败")
-
-
-def deal_subtitles(path_manager: PathManager):
-    use_subs_style = {}
-    subs = pysubs2.load(path_manager.subtitles_dir)
-    if not subs:
-        raise Exception("字幕文件不生效")
-    for event in subs.events:
-        if event.plaintext:
-            language = langid.classify(event.plaintext)
-            if not language:
-                continue
-            if not (output_language in language[0]):
-                logger.info(f"检测到的语言与目标语言不一致：{event.plaintext}")
-                continue
-            if not use_subs_style.get(event.style):
-                use_subs_style[event.style] = 1
-            else:
-                use_subs_style[event.style] = use_subs_style[event.style] + 1
-        pass
-    # 利用 max() 函数找到得分最高的项
-    most_use_style = max(use_subs_style, key=use_subs_style.get)
-    logger.info(f"字幕得使用率最高的style是: {most_use_style}，得分为: {use_subs_style[most_use_style]}")
-    subtitles = {}
-    start_id = 0
-    for event in subs.events:
-        if event.plaintext and event.style == most_use_style:
-            pattern = r"(www.|http|字幕组)"
-            if re.search(pattern, event.plaintext):
-                logger.info(f"无意义字幕组: {event.plaintext}")
-                continue
-            # 解决一下字幕包含括号注解问题，如果发现这个字幕完全是个注释那么直接跳过处理
-            event.plaintext = re.sub(r'\(.*?\)', '', event.plaintext)
-            if len(event.plaintext) <= 0:
-                continue
-            subtitles[start_id] = {
-                "id": start_id,
-                "start": event.start,
-                "end": event.end,
-                "text": event.plaintext
-            }
-            start_id = start_id + 1
-    return subtitles
-
-
-def deal_cut_video(path_manager: PathManager, subtitles: dict):
-    input_wav_audio = AudioSegment.from_file(file=path_manager.input_voice_dir)
-    for id, subtitle in subtitles.items():
-        output_path = os.path.join(path_manager.cut_asr_raw_dir, f"{id}.wav")
-        if not os.path.exists(output_path):
-            if subtitle.get('end') - subtitle.get('start') < 1000:
-                logger.info(f"{subtitle.get('id')}: {subtitle.get('text')} 小于1秒，忽略采集")
-                continue
-            input_wav_audio[subtitle.get('start'):subtitle.get('end')].export(output_path, format='wav')
-        subtitles[id]["is_cut"] = True
-        pass
-    return subtitles
-
-
-def deal_uvr_all_video(path_manager: PathManager):
-    pre_fun = None
-
-    if os.path.exists(path_manager.instrument_dir) and os.path.exists(path_manager.vocal_dir):
-        return
-
-    try:
-        pre_fun = AudioPre(
-            agg=agg,
-            model_path=os.path.join(BASE_DIR, config.uvr5_weights_path, "HP5_only_main_vocal.pth"),
-            device=config.infer_device,
-            is_half=config.is_half,
-        )
-
-        audio = AudioSegment.from_file(path_manager.input_voice_dir)
-        with tempfile.TemporaryDirectory() as tmp:
-            audio_mono_list = audio.split_to_mono()
-            j = 0
-            for one_mono in audio_mono_list:
-                music_file = os.path.join(tmp, f"{j}.wav")
-                ins_path_file = os.path.join(tmp, f"{j}_ins.wav")
-                vocal_path_file = os.path.join(tmp, f"{j}_vocal.wav")
-                logger.info(f"【{j}声道】开始导出数据，请等待")
-                one_mono.export(music_file)
-                if not os.path.exists(music_file):
-                    raise Exception(f"【{j}声道】导出异常，文件没有成功写出")
-
-                logger.info(f"【{j}声道】全视频人声分离开始，这个过程需要数分钟，请耐心等待")
-                pre_fun._path_audio_(
-                    music_file=music_file,
-                    ins_path=ins_path_file,
-                    vocal_path=vocal_path_file,
-                )
-                if (not os.path.exists(ins_path_file)) or (not os.path.exists(vocal_path_file)):
-                    raise Exception(f"【{j}声道】分离失败，文件没有成功写出")
-                j = j + 1
-
-            u_ins_audio = []
-            u_vocal_audio = []
-            for m in range(j):
-                ins_path_file = os.path.join(tmp, f"{m}_ins.wav")
-                vocal_path_file = os.path.join(tmp, f"{m}_vocal.wav")
-                l_ins_audio, r_ins_audio = AudioSegment.from_file(ins_path_file).split_to_mono()
-                if l_ins_audio.rms < r_ins_audio.rms:
-                    u_ins_audio.append(l_ins_audio)
-                else:
-                    u_ins_audio.append(r_ins_audio)
-                l_vocal_audio, r_vocal_audio = AudioSegment.from_file(vocal_path_file).split_to_mono()
-                # 防止爆音 选择能量低的一组
-                if l_vocal_audio.rms < r_vocal_audio.rms:
-                    u_vocal_audio.append(l_vocal_audio)
-                else:
-                    u_vocal_audio.append(r_vocal_audio)
-
-            AudioSegment.from_mono_audiosegments(*u_ins_audio).export(path_manager.instrument_dir)
-            AudioSegment.from_mono_audiosegments(*u_vocal_audio).export(path_manager.vocal_dir)
-    except Exception as err:
-        logger.error(err)
-    finally:
-        try:
-            if pre_fun:
-                del pre_fun.model
-                del pre_fun
-        except Exception as err:
-            logger.error(f"uvr5异常：{err}")
-        logger.info("释放torch.cuda")
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    return
 
 
 def deal_uvr_video(path_manager: PathManager, subtitles: dict):
@@ -416,77 +292,86 @@ def deal_fix_video(path_manager: PathManager, subtitles: dict):
     return subtitles
 
 
-
 def main():
     path_manager = PathManager(TEMP_PATH)
     path_manager.create_directories()
+    engine = create_engine(f'sqlite:///{path_manager.db_dir}')
+
+    if not os.path.exists(path_manager.db_dir):
+        # 这里实现一下创建数据库
+        Base.metadata.create_all(engine)
 
     # 第一步，利用ffmpeg将视频的音频提取出来
     logger.info("ffmpeg，提取视频音频开始")
     init_video(path_manager)
     logger.info("ffmpeg，提取视频音频结束")
 
-    logger.info("字幕处理开始")
-    if not os.path.exists(path_manager.subtitles_result_dir):
-        subtitles = deal_subtitles(path_manager)
-        if not subtitles:
-            raise Exception("字幕提取环节出现了错误导致没有字幕输出")
-        with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
-            json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    else:
-        with open(path_manager.subtitles_result_dir, "r", encoding="utf-8") as f:
-            subtitles = json.load(f)
+    # 字幕分割音频
+    subtitles_extraction = SubtitlesExtraction(engine, path_manager)
+    subtitles_extraction.main()
 
-    logger.info("字幕处理结束")
+    # 视频切割
+    cut_video = CutVideo(engine, path_manager)
+    cut_video.main()
 
-    logger.info("音频与字幕剪切开始")
-    subtitles = deal_cut_video(path_manager, subtitles)
-    with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
-        json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logger.info("音频与字幕剪切完成")
-
-    logger.info("音频分离人声开始")
+    # 提取视频背景音频
     deal_uvr_all_video(path_manager)
-    subtitles = deal_uvr_video(path_manager, subtitles)
-    with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
-        json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logger.info("音频分离人声完成")
 
-    logger.info("ASR人声开始")
-    subtitles = deal_asr(path_manager, subtitles)
-    with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
-        json.dump(subtitles, f, ensure_ascii=False, indent=4)
-    logger.info("ASR人声完成")
+    # 视频提取人声
+    speaker_separation = SpeakerSeparation(engine, path_manager)
+    speaker_separation.main()
 
-    logger.info("TTS人声开始")
-    deal_tts(path_manager, subtitles)
-    logger.info("TTS人声结束")
+    # logger.info("字幕处理开始")
+    # deal_subtitles(engine, path_manager)
+    # logger.info("字幕处理结束")
+    #
+    # logger.info("音频与字幕剪切开始")
+    # deal_cut_video(engine, path_manager)
+    # logger.info("音频与字幕剪切完成")
+    #
+    # logger.info("音频分离人声开始")
 
-    logger.info("高清修复开始")
-    deal_fix_video(path_manager, subtitles)
-    logger.info("高清修复结束")
-
-    logger.info("开始混音")
-    deal_mix_voice(path_manager, subtitles)
-    logger.info("混音结束")
-
-    logger.info("开始合并输出音频")
-
-    input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
-
-    for id, subtitle in subtitles.items():
-        if not os.path.exists(os.path.join(path_manager.cut_mix_dir, f'{id}.wav')):
-            continue
-        this_pic = AudioSegment.from_file(os.path.join(path_manager.cut_mix_dir, f'{id}.wav'))
-        start = subtitle.get("start")
-        end = subtitle.get("end")
-        input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
-
-    input_voice_audio.export(path_manager.output_voice_dir, format='wav')
-    logger.info("音频合成完成")
-
-    input_voice_audio.export(path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
-    logger.info("输出音频已压缩为MP3格式，方便传输测试")
+    # subtitles = deal_uvr_video(path_manager, subtitles)
+    # with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
+    #     json.dump(subtitles, f, ensure_ascii=False, indent=4)
+    # logger.info("音频分离人声完成")
+    #
+    # logger.info("ASR人声开始")
+    # subtitles = deal_asr(path_manager, subtitles)
+    # with open(path_manager.subtitles_result_dir, "w", encoding="utf-8") as f:
+    #     json.dump(subtitles, f, ensure_ascii=False, indent=4)
+    # logger.info("ASR人声完成")
+    #
+    # logger.info("TTS人声开始")
+    # deal_tts(path_manager, subtitles)
+    # logger.info("TTS人声结束")
+    #
+    # logger.info("高清修复开始")
+    # deal_fix_video(path_manager, subtitles)
+    # logger.info("高清修复结束")
+    #
+    # logger.info("开始混音")
+    # deal_mix_voice(path_manager, subtitles)
+    # logger.info("混音结束")
+    #
+    # logger.info("开始合并输出音频")
+    #
+    # input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
+    #
+    # for id, subtitle in subtitles.items():
+    #     if not os.path.exists(os.path.join(path_manager.cut_mix_dir, f'{id}.wav')):
+    #         continue
+    #     this_pic = AudioSegment.from_file(os.path.join(path_manager.cut_mix_dir, f'{id}.wav'))
+    #     start = subtitle.get("start")
+    #     end = subtitle.get("end")
+    #     input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
+    #
+    # input_voice_audio.export(path_manager.output_voice_dir, format='wav')
+    # logger.info("音频合成完成")
+    #
+    # input_voice_audio.export(path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
+    # logger.info("输出音频已压缩为MP3格式，方便传输测试")
+    #
 
 
 if __name__ == '__main__':

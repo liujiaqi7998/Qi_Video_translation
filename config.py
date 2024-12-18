@@ -1,4 +1,5 @@
 import sys, os
+from pathlib import Path
 import torch
 
 # 推理用的指定模型
@@ -14,6 +15,17 @@ pretrained_gpt_path = "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=
 uvr5_weights_path = "tools/uvr5/uvr5_weights"
 asr_models_path = "tools/asr/models"
 resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
+
+# 人声提取激进程度 0-20，默认10
+agg = 10
+input_language = "ja"
+output_language = "zh"
+# 重试次数
+retry_times = 5
+
+
+BASE_DIR = Path(__file__).resolve().parent
+TEMP_PATH = os.path.join(BASE_DIR, "TEMP_2")
 
 exp_root = "logs"
 python_exec = sys.executable or "python"

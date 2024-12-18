@@ -37,3 +37,4 @@ pysubs2
 retrying
 langid
 gradio>=4.0,<=4.24.0
+sqlalchemy

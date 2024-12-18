@@ -27,6 +27,7 @@ class PathManager:
     def __init__(self, base_path):
         self.base_path = base_path
 
+        self.db_dir = os.path.join(base_path, "main.db")
         # Initialize all paths
         self.input_video_dir = os.path.join(base_path, "input.mp4")
         self.input_voice_dir = os.path.join(base_path, "input.wav")
