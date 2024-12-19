@@ -2,18 +2,18 @@ import os
 
 
 class PathManager:
-    '''
+    """
     临时目录设计
     TEMP
 
     input.mp4           输入视频
     input.wav           输入视频提取原始音频
     output.wav          输出音频
-    output.mp4          输出视频
-    subtitles.ass       视频字幕
+    output.mp3          输出音频 (快速预览)
+    main.db             数据记录表
+    subtitles.ass       输入视频字幕
     instrument.wav      原视频背景音乐
     vocal.wav           原视频视频人声
-    - cache             缓存
     - cut
           - instrument  背景音乐切片音频
           - raw         原始音频根据字幕分片
@@ -21,8 +21,7 @@ class PathManager:
           - tts         人声翻译音频音频
           - mix         背景音乐切片
           - fix         人声翻译音频音频高清修复
-    '''
-
+    """
 
     def __init__(self, base_path):
         self.base_path = base_path
@@ -48,8 +47,6 @@ class PathManager:
         self.pyannote_result_dir = os.path.join(base_path, "pyannote.json")
         self.speaker_result_dir = os.path.join(base_path, "speaker.json")
 
-        self.cache_dir = os.path.join(base_path, "cache")
-
         self.cut_instrument_dir = os.path.join(base_path, "cut", "instrument")
         self.cut_asr_vocal_dir = os.path.join(base_path, "cut", "vocal_asr")
         self.cut_asr_raw_dir = os.path.join(base_path, "cut", "raw")
@@ -57,12 +54,10 @@ class PathManager:
         self.cut_mix_dir = os.path.join(base_path, "cut", "mix")
         self.cut_fix_dir = os.path.join(base_path, "cut", "fix")
 
-
         self.directories_to_create = [
             self.cut_instrument_dir,
             self.cut_asr_vocal_dir,
             self.cut_asr_raw_dir,
-            self.cache_dir,
             self.cut_tts_dir,
             self.cut_mix_dir,
             self.cut_fix_dir
