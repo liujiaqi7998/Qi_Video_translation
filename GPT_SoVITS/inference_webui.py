@@ -491,7 +491,7 @@ def get_tts_wav(ref_wav_path, prompt_text, prompt_language, text, text_language,
 
         t2 = ttime()
         # cache_key="%s-%s-%s-%s-%s-%s-%s-%s"%(ref_wav_path,prompt_text,prompt_language,text,text_language,top_k,top_p,temperature)
-        # print(cache.keys(),if_freeze)
+        # print(workplace.keys(),if_freeze)
         if(i_text in cache and if_freeze==True):pred_semantic=cache[i_text]
         else:
             with torch.no_grad():

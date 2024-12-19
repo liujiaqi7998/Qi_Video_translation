@@ -26,7 +26,8 @@ asr_models_path = "tools/asr/models"
 resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
 
 BASE_DIR = Path(__file__).resolve().parent
-TEMP_PATH = os.path.join(BASE_DIR, "TEMP")
+WORKPLACE_PATH = os.environ.get("CACHE_PATH", os.path.join(BASE_DIR, "workplace"))
+TEMP_PATH = os.environ.get("TEMP_PATH", os.path.join(BASE_DIR, "TEMP"))
 
 exp_root = "logs"
 python_exec = sys.executable or "python"

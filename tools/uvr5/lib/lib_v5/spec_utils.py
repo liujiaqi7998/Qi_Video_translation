@@ -210,8 +210,8 @@ def cache_or_load(mix_path, inst_path, mp):
     cache_dir = "mph{}".format(
         hashlib.sha1(json.dumps(mp.param, sort_keys=True).encode("utf-8")).hexdigest()
     )
-    mix_cache_dir = os.path.join("cache", cache_dir)
-    inst_cache_dir = os.path.join("cache", cache_dir)
+    mix_cache_dir = os.path.join("workplace", cache_dir)
+    inst_cache_dir = os.path.join("workplace", cache_dir)
 
     os.makedirs(mix_cache_dir, exist_ok=True)
     os.makedirs(inst_cache_dir, exist_ok=True)
