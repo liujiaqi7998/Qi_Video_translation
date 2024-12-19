@@ -8,14 +8,7 @@ gpt_path = ""
 is_half_str = os.environ.get("is_half", "True")
 is_half = True if is_half_str.lower() == 'true' else False
 
-cnhubert_path = "GPT_SoVITS/pretrained_models/chinese-hubert-base"
-bert_path = "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large"
-pretrained_sovits_path = "GPT_SoVITS/pretrained_models/s2G488k.pth"
-pretrained_gpt_path = "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt"
-uvr5_weights_path = "tools/uvr5/uvr5_weights"
-asr_models_path = "tools/asr/models"
-resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
-
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # 人声提取激进程度 0-20，默认10
 agg = 10
 input_language = "ja"
@@ -23,6 +16,14 @@ output_language = "zh"
 # 重试次数
 retry_times = 5
 
+
+cnhubert_path = "GPT_SoVITS/pretrained_models/chinese-hubert-base"
+bert_path = "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large"
+pretrained_sovits_path = "GPT_SoVITS/pretrained_models/s2G488k.pth"
+pretrained_gpt_path = "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt"
+uvr5_weights_path = "tools/uvr5/uvr5_weights"
+asr_models_path = "tools/asr/models"
+resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMP_PATH = os.path.join(BASE_DIR, "TEMP_2")

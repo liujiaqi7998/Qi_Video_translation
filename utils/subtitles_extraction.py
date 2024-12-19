@@ -28,10 +28,10 @@ class SubtitlesExtraction:
             # 关闭会话
             self.session.close()
 
-    def log(self, msg, n_id=""):
+    def log(self, msg, n_id="", level="INFO"):
         if n_id:
             n_id = f"|{n_id}|"
-        logger.info(f"【{self.name}】{n_id}{msg}")
+        logger.log(level, f"【{self.name}】{n_id}{msg}")
 
     def main(self):
         if not self.session:

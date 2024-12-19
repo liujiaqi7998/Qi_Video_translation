@@ -15,7 +15,6 @@ from utils.file_path import PathManager
 class SpeakerSeparation:
     name = "视频提取人声"
     session = None
-    subtitles = []
     path_manager = None
 
     def __init__(self, engine, path_manager):
@@ -33,10 +32,10 @@ class SpeakerSeparation:
             # 关闭会话
             self.session.close()
 
-    def log(self, msg, n_id=""):
+    def log(self, msg, n_id="", level="INFO"):
         if n_id:
             n_id = f"|{n_id}|"
-        logger.info(f"【{self.name}】{n_id}{msg}")
+        logger.log(level, f"【{self.name}】{n_id}{msg}")
 
     def main(self):
         if not self.session:
@@ -51,15 +50,22 @@ class SpeakerSeparation:
                 count = 0
                 subtitles = self.session.query(MainData).all()
                 for subtitle in subtitles:
-                    vocal_path = os.path.join(self.path_manager.cut_asr_vocal_dir, f"{subtitle.id}.wav")
                     raw_path = os.path.join(self.path_manager.cut_asr_raw_dir, f"{subtitle.id}.wav")
-                    if os.path.exists(vocal_path):
+                    if subtitle.cut_video_status != "OK":
+                        subtitle.speaker_separation_status = "跳过"
+                        continue
+                    if subtitle.speaker_separation_status == "OK":
+                        # 发现已经处理过了直接跳过
                         continue
                     if not os.path.exists(raw_path):
+                        subtitle.speaker_separation_status = "音频片段文件不存在"
                         continue
                     shutil.copyfile(raw_path, os.path.join(tmp, f"{subtitle.id}.wav"))
                     count = count + 1
+
+                self.session.commit()
                 self.log(f"一共{count}个音频需要提取人声")
+
                 if count > 0:
                     os.system(f"{config.resemble_enhance_cmd} {tmp} {self.path_manager.cut_asr_vocal_dir}")
                 self.log(f"人声提取完成")
@@ -73,7 +79,7 @@ class SpeakerSeparation:
                     if os.path.exists(instrument_path):
                         subtitle.speaker_separation_status = "OK"
         finally:
-            self.session.add_all(self.subtitles)
+            self.session.commit()
             self.close_session()
             self.log(f"{self.name}结束")
 

@@ -46,6 +46,7 @@ class CutVideo:
                 if not os.path.exists(output_path):
                     if subtitle.end_time - subtitle.start_time < 1000:
                         self.log(f"{subtitle.subtitle_text} 小于1秒，忽略采集", f"{subtitle.id}")
+                        subtitle.cut_video_status = "小于1秒忽略"
                         continue
                     input_wav_audio[subtitle.start_time:subtitle.end_time].export(output_path, format='wav')
                 subtitle.cut_video_status = "OK"
