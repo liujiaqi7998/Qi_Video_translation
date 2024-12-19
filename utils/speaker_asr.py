@@ -23,6 +23,7 @@ class SpeakerASR:
             raise Exception("engine is None")
         self.session = sessionmaker(bind=engine)()
         self.path_manager = path_manager
+        logger.info(f"{self.name}开始")
 
     def close_session(self):
         if self.session:
@@ -82,9 +83,9 @@ class SpeakerASR:
                         subtitle.asr_extended = asr_result
                         subtitle.asr_status = "OK"
                         self.session.commit()
-                    except Exception as err:
-                        self.log(f"识别：{subtitle.subtitle_text}，发生异常：{err}，触发重试", f"{subtitle.id}", "WARNING")
-                        raise err
+                    except Exception as e:
+                        self.log(f"识别：{subtitle.subtitle_text}，发生异常：{e}，触发重试", f"{subtitle.id}", "WARNING")
+                        raise e
                 try:
                     need_retry()
                 except Exception as err:

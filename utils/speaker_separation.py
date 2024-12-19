@@ -24,6 +24,7 @@ class SpeakerSeparation:
             raise Exception("engine is None")
         self.session = sessionmaker(bind=engine)()
         self.path_manager = path_manager
+        logger.info(f"{self.name}开始")
 
     def close_session(self):
         if self.session:

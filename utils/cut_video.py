@@ -1,12 +1,10 @@
 import os
-import re
-import langid
-import pysubs2
+
+from loguru import logger
 from pydub import AudioSegment
 from sqlalchemy.orm import sessionmaker
-from config import output_language
+
 from utils.db_utils import MainData
-from loguru import logger
 
 
 class CutVideo:
@@ -22,6 +20,7 @@ class CutVideo:
             raise Exception("engine is None")
         self.session = sessionmaker(bind=engine)()
         self.path_manager = path_manager
+        logger.info(f"{self.name}开始")
 
     def close_session(self):
         if self.session:

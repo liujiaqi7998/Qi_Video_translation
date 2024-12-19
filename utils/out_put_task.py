@@ -1,16 +1,14 @@
 import os
-import shutil
-import tempfile
-import torch
+
 from loguru import logger
 from pydub import AudioSegment
 from sqlalchemy.orm import sessionmaker
-import config
+
 from utils.db_utils import MainData
 
 
-class MixVoice:
-    name = "混合音频"
+class OutPutTask:
+    name = "输出混流"
     session = None
     path_manager = None
 
@@ -21,7 +19,7 @@ class MixVoice:
             raise Exception("engine is None")
         self.session = sessionmaker(bind=engine)()
         self.path_manager = path_manager
-
+        logger.info(f"{self.name}开始")
 
     def close_session(self):
         if self.session:
@@ -39,30 +37,20 @@ class MixVoice:
         if not self.session:
             raise Exception("数据库未初始化")
         try:
+            input_voice_audio = AudioSegment.from_file(self.path_manager.input_voice_dir)
             subtitles = self.session.query(MainData).all()
             for subtitle in subtitles:
-                translated_wav = os.path.join(self.path_manager.cut_fix_dir, f'{subtitle.id}.wav')
-                instrument_wav = os.path.join(self.path_manager.cut_instrument_dir, f'{subtitle.id}.wav')
-                output_wav = os.path.join(self.path_manager.cut_mix_dir, f'{subtitle.id}.wav')
-
-                if subtitle.mix_status == "OK":
-                    # 如果生成过直接跳过
+                if not os.path.exists(os.path.join(self.path_manager.cut_mix_dir, f'{subtitle.id}.wav')):
                     continue
-
-                if (not os.path.exists(translated_wav)) or (not os.path.exists(instrument_wav)):
-                    subtitle.mix_status = "跳过"
-                    continue
-
-                translated_audio = AudioSegment.from_file(translated_wav)
-                background_audio = AudioSegment.from_file(instrument_wav)
-                mixed_audio = background_audio.overlay(translated_audio)
-                mixed_audio.export(output_wav, format="wav")
-                subtitle.mix_status = "OK"
-                self.session.commit()
+                this_pic = AudioSegment.from_file(os.path.join(self.path_manager.cut_mix_dir, f'{subtitle.id}.wav'))
+                start = subtitle.start_time
+                end = subtitle.end_time
+                input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
+            input_voice_audio.export(self.path_manager.output_voice_dir, format='wav')
+            self.log("wav音频合成完成")
+            input_voice_audio.export(self.path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
+            self.log("输出音频已压缩为MP3格式，方便传输测试")
         finally:
             self.session.commit()
             self.close_session()
             self.log(f"{self.name}结束")
-            self.log("释放torch.cuda")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()

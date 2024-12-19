@@ -26,7 +26,7 @@ LangSegment>=0.2.0
 Faster_Whisper
 wordsegment
 rotary_embedding_torch
-pyjyutping 
+pyjyutping
 g2pk2
 ko_pron
 opencc; sys_platform != 'linux'
@@ -38,3 +38,6 @@ retrying
 langid
 gradio>=4.0,<=4.24.0
 sqlalchemy
+pydub
+soundfile
+whisper

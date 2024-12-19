@@ -10,6 +10,7 @@ from utils.db_utils import Base
 from utils.file_path import PathManager
 from utils.mix_voice import MixVoice
 from utils.optimization_task import OptimizationTask
+from utils.out_put_task import OutPutTask
 from utils.speaker_asr import SpeakerASR
 from utils.speaker_separation import deal_uvr_all_video, SpeakerSeparation
 from utils.subtitles_extraction import SubtitlesExtraction
@@ -72,24 +73,9 @@ def main():
     mix_voice = MixVoice(engine, path_manager)
     mix_voice.main()
 
-    # logger.info("开始合并输出音频")
-    #
-    # input_voice_audio = AudioSegment.from_file(path_manager.input_voice_dir)
-
-    # for id, subtitle in subtitles.items():
-    #     if not os.path.exists(os.path.join(path_manager.cut_mix_dir, f'{id}.wav')):
-    #         continue
-    #     this_pic = AudioSegment.from_file(os.path.join(path_manager.cut_mix_dir, f'{id}.wav'))
-    #     start = subtitle.get("start")
-    #     end = subtitle.get("end")
-    #     input_voice_audio = input_voice_audio[:start] + this_pic + input_voice_audio[end:]
-    #
-    # input_voice_audio.export(path_manager.output_voice_dir, format='wav')
-    # logger.info("音频合成完成")
-    #
-    # input_voice_audio.export(path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
-    # logger.info("输出音频已压缩为MP3格式，方便传输测试")
-    #
+    # 输出
+    out_put = OutPutTask(engine, path_manager)
+    out_put.main()
 
 
 if __name__ == '__main__':

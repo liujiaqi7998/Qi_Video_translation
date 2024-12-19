@@ -1,8 +1,7 @@
 import os
 import sys
-
-import soundfile as sf
 import torch
+import soundfile as sf
 from loguru import logger
 from pydub import AudioSegment
 from retrying import retry
@@ -118,9 +117,9 @@ class TTSTask:
                             raise Exception("输出音频时长大于原音频，需要压缩时长")
                         subtitle.tts_status = "OK"
                         self.session.commit()
-                    except Exception as err:
-                        self.log(f"处理{subtitle.subtitle_text} 发生异常:{err}，触发重试", str(subtitle.id), "WARNING")
-                        raise err
+                    except Exception as e:
+                        self.log(f"处理{subtitle.subtitle_text} 发生异常:{e}，触发重试", str(subtitle.id), "WARNING")
+                        raise e
 
                 try:
                     need_retry()
