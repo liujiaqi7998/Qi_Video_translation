@@ -7,14 +7,18 @@ sovits_path = ""
 gpt_path = ""
 is_half_str = os.environ.get("is_half", "True")
 is_half = True if is_half_str.lower() == 'true' else False
+BASE_DIR = Path(__file__).resolve().parent
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 # 人声提取激进程度 0-20，默认10
-agg = 10
+agg = 5
 input_language = "ja"
 output_language = "zh"
 # 重试次数
 retry_times = 5
+TEMP_PATH = os.path.join(BASE_DIR, "TEMP")
 
 
 cnhubert_path = "GPT_SoVITS/pretrained_models/chinese-hubert-base"
@@ -25,9 +29,6 @@ uvr5_weights_path = "tools/uvr5/uvr5_weights"
 asr_models_path = "tools/asr/models"
 resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
 
-BASE_DIR = Path(__file__).resolve().parent
-WORKPLACE_PATH = os.environ.get("CACHE_PATH", os.path.join(BASE_DIR, "workplace"))
-TEMP_PATH = os.environ.get("TEMP_PATH", os.path.join(BASE_DIR, "TEMP"))
 
 exp_root = "logs"
 python_exec = sys.executable or "python"

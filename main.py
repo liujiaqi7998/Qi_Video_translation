@@ -5,6 +5,27 @@ from loguru import logger
 from sqlalchemy import create_engine
 
 import config
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.description = '请指定先关参数'
+
+    TEMP_PATH = os.path.join(config.BASE_DIR, "TEMP")
+
+    parser.add_argument("-agg", "--agg", help="人声提取激进程度,0-20，默认10", dest="agg", type=int, default="10")
+    parser.add_argument("-input", "--input_language", help="输入语言,默认ja", dest="input_language", type=str, default="ja")
+    parser.add_argument("-output", "--output_language", help="输出语言,默认zh", dest="output_language", type=str, default="zh")
+    parser.add_argument("-retry", "--retry_times", help="重试次数,默认重试5次", dest="retry_times", type=int, default="5")
+    parser.add_argument("-path", "--temp_dir", help="工作目录,默认./TEMP", dest="TEMP_PATH", type=str, default=TEMP_PATH)
+    args = parser.parse_args()
+
+    config.agg = args.agg
+    config.output_language = args.output_language
+    config.input_language = args.input_language
+    config.retry_times = args.retry_times
+    config.TEMP_PATH = args.TEMP_PATH
+
 from utils.cut_video import CutVideo
 from utils.db_utils import Base
 from utils.file_path import PathManager
@@ -29,6 +50,7 @@ def init_video(path_manager: PathManager):
 
 
 def main():
+
     path_manager = PathManager(config.TEMP_PATH)
     path_manager.create_directories()
     engine = create_engine(f'sqlite:///{path_manager.db_dir}')
