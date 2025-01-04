@@ -3,6 +3,7 @@ import langid
 import pysubs2
 from sqlalchemy.orm import sessionmaker
 from config import output_language
+import config
 from utils.db_utils import MainData
 from loguru import logger
 
@@ -62,7 +63,12 @@ class SubtitlesExtraction:
                 pass
             # 利用 max() 函数找到得分最高的项
             most_use_style = max(use_subs_style, key=use_subs_style.get)
+            
             self.log(f"字幕得使用率最高的style是: {most_use_style}，得分为: {use_subs_style[most_use_style]}")
+            if config.sub_style:
+                most_use_style = config.sub_style
+                self.log(f"设置了字幕用于处理的目标style: {most_use_style}")
+            
             start_id = 0
             for event in subs.events:
                 if event.plaintext and event.style == most_use_style:

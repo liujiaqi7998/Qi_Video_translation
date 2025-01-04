@@ -32,7 +32,9 @@ pip install -r requirements.txt
 
 1. 创建文件夹 `TEMP`
 2. 将视频放入文件夹中，重命名为 `input.mp4`
-3. 将字幕文件放入文件夹，重命名为  `subtitles.ass`
+3. 如果文件不是视频格式，请将音频文件放入文件夹，重命名为 `input.wav`
+4. 将字幕文件放入文件夹，重命名为  `subtitles.ass`
+
 
 ### 开始使用
 
@@ -49,6 +51,23 @@ python main.py -path "TEMP"
 生成的音频文件在 `./TEMP/output.wav`
 
 保存文件后使用 ffmpeg 可以将音频混入到视频
+
+为了方便预览会生成 `./TEMP/output.mp3` 文件，小体积有损压缩便于在节约网络带宽的场景下使用
+
+### 使用容器
+
+```bash
+/root/miniconda3/envs/Qi_Video_translation/bin/python3 main.py -path "TEMP"
+```
+
+### 使用webUI
+
+webUI 使用的是 gradio 库，可以方便的进行任务调度，该功能还在开发中，请耐心等待
+
+```
+python webui.py
+```
+
 
 # 特别鸣谢
 

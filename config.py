@@ -27,10 +27,13 @@ pretrained_sovits_path = "GPT_SoVITS/pretrained_models/s2G488k.pth"
 pretrained_gpt_path = "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt"
 uvr5_weights_path = "tools/uvr5/uvr5_weights"
 asr_models_path = "tools/asr/models"
-resemble_enhance_cmd = "/home/liujiaqi/miniconda3/envs/resemble-enhance/bin/resemble-enhance"
-
+resemble_enhance_model_path = os.path.join(BASE_DIR, 'tools/resemble_enhance/model_repo/enhancer_stage2/')
+resemble_enhance_cmd = f"/root/miniconda3/envs/resemble-enhance/bin/resemble-enhance --run_dir {resemble_enhance_model_path}"
 
 exp_root = "logs"
+# 字幕用于处理的目标style，默认会通过筛选出场率最高的style作为目标处理字幕
+sub_style = ""
+
 python_exec = sys.executable or "python"
 if torch.cuda.is_available():
     infer_device = "cuda"
