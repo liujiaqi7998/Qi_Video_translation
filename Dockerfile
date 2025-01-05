@@ -51,3 +51,6 @@ COPY . /app
 
 # 设置工作目录
 WORKDIR /app
+
+# 拷贝nltk_data
+RUN  cp -r /app/nltk_data /root/nltk_data

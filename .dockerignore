@@ -16,6 +16,5 @@ TEMP
 weight.json
 ffmpeg*
 ffprobe*
-nltk_data
 TEMP_*
 workplace

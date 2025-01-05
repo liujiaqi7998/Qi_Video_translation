@@ -19,6 +19,7 @@ if __name__ == '__main__':
     parser.add_argument("-retry", "--retry_times", help="重试次数,默认重试5次", dest="retry_times", type=int, default="5")
     parser.add_argument("-path", "--temp_dir", help="工作目录,默认./TEMP", dest="TEMP_PATH", type=str, default=TEMP_PATH)
     parser.add_argument("-sub_style", "--sub_style", help="字幕用于处理的目标style，默认会通过筛选出场率最高的style作为目标处理字幕", dest="sub_style", type=str, default="")
+    parser.add_argument("-mkv", "--combined_mkv", help="合成视频成mkv文件", dest="combined_mkv", type=int, default="1")
     args = parser.parse_args()
 
     config.agg = args.agg
@@ -27,6 +28,7 @@ if __name__ == '__main__':
     config.retry_times = args.retry_times
     config.TEMP_PATH = args.TEMP_PATH
     config.sub_style = args.sub_style
+    config.combined_mkv = args.combined_mkv
 
 from utils.cut_video import CutVideo
 from utils.db_utils import Base

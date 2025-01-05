@@ -34,6 +34,9 @@ exp_root = "logs"
 # 字幕用于处理的目标style，默认会通过筛选出场率最高的style作为目标处理字幕
 sub_style = ""
 
+# 是否合成mkv文件
+combined_mkv = 1
+
 python_exec = sys.executable or "python"
 if torch.cuda.is_available():
     infer_device = "cuda"

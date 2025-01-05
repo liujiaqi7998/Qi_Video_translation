@@ -36,7 +36,7 @@ class PathManager:
 
         self.subtitles_dir = os.path.join(base_path, "subtitles.ass")
 
-        self.output_video_dir = os.path.join(base_path, "output.mp4")
+        self.output_video_dir = os.path.join(base_path, "output.mkv")
         self.output_voice_dir = os.path.join(base_path, "output.wav")
         self.output_voice_mp3_dir = os.path.join(base_path, "output.mp3")
 

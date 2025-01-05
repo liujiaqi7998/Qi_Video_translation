@@ -4,6 +4,7 @@ from loguru import logger
 from pydub import AudioSegment
 from sqlalchemy.orm import sessionmaker
 
+import config
 from utils.db_utils import MainData
 
 
@@ -50,6 +51,20 @@ class OutPutTask:
             self.log("wav音频合成完成")
             input_voice_audio.export(self.path_manager.output_voice_mp3_dir, format='mp3', bitrate="192k")
             self.log("输出音频已压缩为MP3格式，方便传输测试")
+            if config.combined_mkv:
+                # 判断输入视频是否存在
+                if not os.path.exists(self.path_manager.input_video_dir):
+                    return
+                self.log("开始合成视频")
+                # 合成视频
+                # self.path_manager.input_video_dir 是输入视频
+                # self.path_manager.output_voice_dir 是新的音频
+                # self.path_manager.subtitles_dir 是字幕
+                # config.output_language 是目标语言
+                # 将新的音频作为新的音轨，和输入视频合并，语言是config.output_language
+                os.system(f"ffmpeg -i {self.path_manager.input_video_dir} -i {self.path_manager.output_voice_dir} -c copy -map 0 -map 1:a -metadata:s:a:0 language={config.output_language} -metadata:s:a:0 title=\"{config.output_language} Audio\" {self.path_manager.output_video_dir}")
+                self.log("视频合成完成")
+                
         finally:
             self.session.commit()
             self.close_session()
