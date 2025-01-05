@@ -64,7 +64,7 @@ python main.py -path "TEMP"
 
 webUI 使用的是 gradio 库，可以方便的进行任务调度，该功能还在开发中，请耐心等待
 
-```
+```bash
 python webui.py
 ```
 
