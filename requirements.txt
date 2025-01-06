@@ -43,3 +43,4 @@ pydub
 soundfile
 whisper
 loguru
+celery
