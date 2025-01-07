@@ -18,3 +18,4 @@ ffmpeg*
 ffprobe*
 TEMP_*
 workplace
+.env

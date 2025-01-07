@@ -46,3 +46,4 @@ loguru
 # 部署用
 celery
 Redis
+boto3

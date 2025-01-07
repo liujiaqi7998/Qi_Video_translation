@@ -1,15 +1,36 @@
 from celery import Celery
-import base64
 import os
 from loguru import logger
 import requests
 import hashlib
+import boto3
 
 broker_url = os.getenv('BROKER_URL')
+endpoint_url = os.getenv('S3_ENDPOINT')
+access_key = os.getenv('S3_AK')
+secret_key = os.getenv('S3_SK')
+bucket = os.getenv('S3_BUCKET')
+
 if not broker_url:
     raise Exception("未找到BROKER_URL环境变量，程序退出")
 
+if not endpoint_url:
+    raise Exception("未找到S3_ENDPOINT环境变量，程序退出")
+
+if not access_key:
+    raise Exception("未找到S3_AK环境变量，程序退出")
+
+if not secret_key:
+    raise Exception("未找到S3_SK环境变量，程序退出")
+
+if not bucket:
+    raise Exception("未找到S3_BUCKET环境变量，程序退出")
+
+if not os.path.exists('TEMP'):
+    os.makedirs('TEMP')
+        
 app = Celery('队列', broker=broker_url)
+s3_client = boto3.client('s3', endpoint_url=endpoint_url, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
 
 @app.task
 def run_main(args):
@@ -17,26 +38,20 @@ def run_main(args):
     
     logger.info("接收到任务: {}".format(args))
     
-    if video_url := args.get("video_url"):
-        encoded_video_name = hashlib.md5(os.path.basename(video_url).encode()).hexdigest()
-        temp_dir = f'TEMP/{encoded_video_name}'
+    if video_key := args.get("video_key"):
+        temp_dir = f'TEMP/{hashlib.md5(video_key.encode()).hexdigest()}'
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
-        response = requests.get(video_url)
-        video_content = response.content
-        with open(f'{temp_dir}/input.mp4', 'wb') as f:
-            f.write(video_content)
+        s3_client.download_file(bucket, video_key, f'TEMP/{video_key}')
         command += f' --temp_dir {temp_dir}'
     else:
-        raise Exception("未找到video_url参数，程序退出")
+        raise Exception("未找到video_key参数，程序退出")
     
-    if subtitle_url := args.get("subtitle_url"):
-        response = requests.get(subtitle_url)
-        subtitle_content = response.content
-        with open(f'{temp_dir}/subtitles.ass', 'wb') as f:
-            f.write(subtitle_content)
+    if subtitle_key := args.get("subtitle_key"):
+        s3_client.download_file(bucket, subtitle_key, f'{temp_dir}/subtitles.ass')
+        command += f' --subtitles_path {temp_dir}/subtitles.ass'
     else:
-        raise Exception("未找到subtitle_url参数，程序退出")
+        raise Exception("未找到subtitle_key参数，程序退出")
     
     if agg := args.get("agg"):
         command += f' --agg {agg}'

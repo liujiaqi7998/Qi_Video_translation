@@ -11,10 +11,10 @@ services:
     restart: unless-stopped
     network_mode: host
     tty: true
+    env_file:
+      - .env
     environment:
       - TZ=Asia/Shanghai
-      - BROKER_URL=""
-      - CUDA_VISIBLE_DEVICES=1
     volumes:
       - "./TEMP:/app/TEMP"
     command: /root/miniconda3/envs/Qi_Video_translation/bin/celery -A celery_work worker -c 1
