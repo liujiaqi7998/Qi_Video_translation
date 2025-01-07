@@ -57,7 +57,11 @@ python main.py -path "TEMP"
 ### 使用容器
 
 ```bash
+# 直接运行
 /root/miniconda3/envs/Qi_Video_translation/bin/python3 main.py -path "TEMP"
+
+# 使用celery
+/root/miniconda3/envs/Qi_Video_translation/bin/celery -A celery_work worker -c 1
 ```
 
 ### 使用webUI

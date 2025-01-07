@@ -43,4 +43,6 @@ pydub
 soundfile
 whisper
 loguru
+# 部署用
 celery
+Redis
