@@ -1,9 +1,9 @@
 from celery import Celery
 import os
 from loguru import logger
-import requests
+from boto3.session import Session
 import hashlib
-import boto3
+from botocore.client import Config
 
 broker_url = os.getenv('BROKER_URL')
 endpoint_url = os.getenv('S3_ENDPOINT')
@@ -30,7 +30,12 @@ if not os.path.exists('TEMP'):
     os.makedirs('TEMP')
         
 app = Celery('队列', broker=broker_url)
-s3_client = boto3.client('s3', endpoint_url=endpoint_url, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+session = Session(aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+# 连接到minio
+s3_client = session.resource('s3', endpoint_url=endpoint_url, config=Config(s3={'addressing_style': 'path'}))
+
 
 @app.task
 def run_main(args):
@@ -42,14 +47,13 @@ def run_main(args):
         temp_dir = f'TEMP/{hashlib.md5(video_key.encode()).hexdigest()}'
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
-        s3_client.download_file(bucket, video_key, f'TEMP/{video_key}')
+        s3_client.Object(bucket, video_key).download_file(f'{temp_dir}/input.mp4')
         command += f' --temp_dir {temp_dir}'
     else:
         raise Exception("未找到video_key参数，程序退出")
     
     if subtitle_key := args.get("subtitle_key"):
-        s3_client.download_file(bucket, subtitle_key, f'{temp_dir}/subtitles.ass')
-        command += f' --subtitles_path {temp_dir}/subtitles.ass'
+        s3_client.Object(bucket, subtitle_key).download_file(f'{temp_dir}/subtitles.ass')
     else:
         raise Exception("未找到subtitle_key参数，程序退出")
     
@@ -65,7 +69,6 @@ def run_main(args):
     if retry_times := args.get("retry_times"):
         command += f' --retry_times {retry_times}'
     
-    
     if sub_style := args.get("sub_style"):
         command += f' --sub_style {sub_style}'
     
@@ -75,3 +78,15 @@ def run_main(args):
     logger.info(f"运行项目：{command}")
     
     os.system(command)
+    
+    # 生成的视频是output.mp4
+    output_key = args.get("output_key")
+    if not output_key:
+        raise Exception("未找到output_key参数，程序退出")
+    # 判断视频是否存在
+    if not os.path.exists(f'{temp_dir}/output.mkv'):
+        raise Exception("未找到output.mp4文件，程序退出")
+    s3_client.Object(bucket, output_key).upload_file(f'{temp_dir}/output.mkv')
+
+    logger.info("任务已完成")
+
