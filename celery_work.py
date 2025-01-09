@@ -79,13 +79,13 @@ def run_main(args):
     
     os.system(command)
     
-    # 生成的视频是output.mp4
+    # 生成的视频是output.mkv
     output_key = args.get("output_key")
     if not output_key:
         raise Exception("未找到output_key参数，程序退出")
     # 判断视频是否存在
     if not os.path.exists(f'{temp_dir}/output.mkv'):
-        raise Exception("未找到output.mp4文件，程序退出")
+        raise Exception("未找到output.mkv文件，程序退出")
     s3_client.Object(bucket, output_key).upload_file(f'{temp_dir}/output.mkv')
 
     logger.info("任务已完成")

@@ -49,5 +49,7 @@ RUN /root/miniconda3/envs/Qi_Video_translation/bin/pip install -r /tmp/requireme
 # 拷贝到 app
 COPY . /app
 
+RUN cp -r 
+
 # 设置工作目录
 WORKDIR /app
