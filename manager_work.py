@@ -38,10 +38,15 @@ session = Session(aws_access_key_id=access_key, aws_secret_access_key=secret_key
 s3_client = session.resource('s3', endpoint_url=endpoint_url, config=Config(s3={'addressing_style': 'path'}))
 
 
+def submit_log(url_log, task_id, log):
+    requests.post(url_log, json={"task_id": task_id, "log": log})
+
+
 def run_main(args):
     command = 'cd /app && /root/miniconda3/envs/Qi_Video_translation/bin/python3 main.py'
     
     logger.info("接收到任务: {}".format(args))
+    submit_log(args.get("url_log"), args.get("task_id"), "接收到任务: {}".format(args))
     
     if video_key := args.get("video_key"):
         temp_dir = f'TEMP/{hashlib.md5(video_key.encode()).hexdigest()}'
@@ -76,7 +81,9 @@ def run_main(args):
         command += f' --combined_mkv {combined_mkv}'
     
     logger.info(f"运行项目：{command}")
-    
+    submit_log(args.get("url_log"), args.get("task_id"), f"运行项目：{command}")
+
+    # 运行项目
     os.system(command)
     
     # 生成的视频是output.mkv
@@ -88,12 +95,14 @@ def run_main(args):
         raise Exception("未找到output.mkv文件，程序退出")
     s3_client.Object(bucket, output_key).upload_file(f'{temp_dir}/output.mkv')
 
-    logger.info("任务已完成")
+    logger.success("任务已完成")
+    submit_log(args.get("url_log"), args.get("task_id"), "任务已完成")
 
 
 def run_get_task():
     url_get = f"{manager_url}/qi_video_translation/get_video_translation_undone_task/"
     url_change = f"{manager_url}/qi_video_translation/change_video_translation_task/"
+    url_log = f"{manager_url}/qi_video_translation/submit_video_translation_log/"
     response = requests.get(url_get)
     if response.status_code == 200:
         data = response.json().get("data")
@@ -109,12 +118,13 @@ def run_get_task():
                     "output_key": data["output_path"],
                     "sub_style": data["sub_style"],
                     "agg": data["agg"],
-                    "retry_times": data["retry_times"]
+                    "retry_times": data["retry_times"],
+                    "url_log": url_log,
                 })
                 requests.post(url_change, json={"task_id": data["id"], "status": "完成"})
             except Exception as e:
                 logger.error(f"任务处理失败: {e}")
-                logger.exception(e)
+                requests.post(url_log, json={"task_id": data["id"], "log": str(e)})
                 requests.post(url_change, json={"task_id": data["id"], "status": "失败"})
         else:
             logger.info("获取任务成功，但未找到数据")
