@@ -57,7 +57,8 @@ class OutPutTask:
                     return
                 self.log("开始合成视频")
                 # 合成视频
-                os.system(f"ffmpeg -i {self.path_manager.input_video_dir} -i {self.path_manager.output_voice_dir} -i {self.path_manager.subtitles_dir} -c copy -map 0:v -map 1:a -map 0:a -map 2:s -disposition:a:0 default -disposition:a:1 none {self.path_manager.output_video_dir}")
+                cmd = f"ffmpeg -i {self.path_manager.input_video_dir} -i {self.path_manager.output_voice_dir} -c copy -map 0:v -map 1:a -map 0:a -disposition:a:0 default -disposition:a:1 none {self.path_manager.output_video_dir}"
+                os.system(cmd)
                 self.log("视频合成完成")
                 
         finally:

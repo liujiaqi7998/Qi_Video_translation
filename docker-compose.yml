@@ -3,7 +3,7 @@ version: '3'
 services:
 
   qi_video_translation_dev_liujiaqi:
-    image: qi_video_translation:dev_20241018
+    image: qi_video_translation:dev_202501172207
     build:
       context: .
       dockerfile: Dockerfile
