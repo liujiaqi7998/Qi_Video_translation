@@ -6,6 +6,7 @@ from loguru import logger
 from sqlalchemy.orm import sessionmaker
 import config
 from utils.db_utils import MainData
+from pydub import AudioSegment
 
 
 class OptimizationTask:
@@ -34,6 +35,22 @@ class OptimizationTask:
             n_id = f"|{n_id}|"
         logger.log(level, f"【{self.name}】{n_id}{msg}")
 
+    
+    def normalize_audio(self, raw_voice_path, reference_audio_path):
+        raw_voice = AudioSegment.from_file(raw_voice_path)
+        reference_audio = AudioSegment.from_file(reference_audio_path)
+        
+        # 获取参考音频的音量
+        reference_db = reference_audio.dBFS
+        # 调整原始音频的音量以匹配参考音频
+        db_change = reference_db - raw_voice.dBFS
+        normalized_voice = raw_voice + db_change
+        
+        # 保存调整后的音频
+        normalized_voice.export(raw_voice_path, format="wav")
+        return
+    
+    
     def main(self):
         if not self.session:
             raise Exception("数据库未初始化")
@@ -63,13 +80,18 @@ class OptimizationTask:
                 self.log(f"一共{count}个音频需要提取人声")
                 if count > 0:
                     os.system(f"{config.resemble_enhance_cmd} {tmp} {self.path_manager.cut_fix_dir}")
-                self.log(f"语音修复完成")
+                self.log("语音修复完成")
 
                 for subtitle in subtitles:
                     # 判断一下
                     fix_path = os.path.join(self.path_manager.cut_fix_dir, f"{subtitle.id}.wav")
                     if os.path.exists(fix_path):
                         subtitle.optimization_status = "OK"
+                        # 这里进行音量均衡
+                        reference_audio = os.path.join(self.path_manager.cut_asr_vocal_dir, f"{subtitle.id}.wav")
+                        if os.path.exists(reference_audio):
+                            self.normalize_audio(fix_path, reference_audio)
+                            
         finally:
             self.session.commit()
             self.close_session()
