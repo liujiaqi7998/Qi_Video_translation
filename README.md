@@ -28,12 +28,19 @@ conda install ffmpeg cmake
 conda install pytorch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 pytorch-cuda=11.8 -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
+
+准备模型
+
+建议从 https://github.com/RVC-Boss/GPT-SoVITS 文档拉取模型
+
+
 ### 文件准备
 
 1. 创建文件夹 `TEMP`
 2. 将视频放入文件夹中，重命名为 `input.mp4`
 3. 如果文件不是视频格式，请将音频文件放入文件夹，重命名为 `input.wav`
 4. 将字幕文件放入文件夹，重命名为  `subtitles.ass`
+5. 字幕文件的质量影响合成的效果，请保证字幕的时间轴与视频对齐，请先完成这个步骤。
 
 
 ### 开始使用
@@ -48,23 +55,17 @@ python main.py -path "TEMP"
 
 ### 取出文件
 
-生成的音频文件在 `./TEMP/output.wav`
+生成的视频文件在 `./TEMP/output.mkv`
 
-保存文件后使用 ffmpeg 可以将音频混入到视频
+生成的音频文件在 `./TEMP/output.wav`
 
 为了方便预览会生成 `./TEMP/output.mp3` 文件，小体积有损压缩便于在节约网络带宽的场景下使用
 
 ### 使用容器
 
-```bash
-# 直接运行
-/root/miniconda3/envs/Qi_Video_translation/bin/python3 main.py -path "TEMP"
+使用Dockerfile构架
 
-# 使用celery
-/root/miniconda3/envs/Qi_Video_translation/bin/celery -A celery_work worker -c 1
-```
-
-### 使用webUI
+### 使用webUI（Beta）
 
 webUI 使用的是 gradio 库，可以方便的进行任务调度，该功能还在开发中，请耐心等待
 
@@ -78,3 +79,21 @@ python webui.py
 我们使用了绝大多数的代码来自：
 
 https://github.com/RVC-Boss/GPT-SoVITS
+
+特别感谢以下项目和贡献者：
+
+https://github.com/resemble-ai/resemble-enhance
+
+https://huggingface.co/lj1995/VoiceConversionWebUI
+
+https://github.com/RubyMetric/chsrc
+
+https://github.com/FFmpeg/FFmpeg
+
+https://github.com/alibaba-damo-academy/FunASR
+
+https://github.com/SYSTRAN/faster-whisper
+
+https://github.com/gradio-app/gradio
+
+https://github.com/jaywalnut310/vits
