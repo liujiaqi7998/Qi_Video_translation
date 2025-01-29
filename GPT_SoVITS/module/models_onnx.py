@@ -1,6 +1,5 @@
 import copy
 import math
-from typing import Optional
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -12,10 +11,9 @@ from module import attentions_onnx as attentions
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from module.commons import init_weights, get_padding
+from module.mrte_model import MRTE
 from module.quantize import ResidualVectorQuantizer
-# from text import symbols
-from text import symbols as symbols_v1
-from text import symbols2 as symbols_v2
+from text import symbols
 from torch.cuda.amp import autocast
 
 
@@ -184,7 +182,6 @@ class TextEncoder(nn.Module):
         kernel_size,
         p_dropout,
         latent_channels=192,
-        version="v2",
     ):
         super().__init__()
         self.out_channels = out_channels
@@ -195,7 +192,6 @@ class TextEncoder(nn.Module):
         self.kernel_size = kernel_size
         self.p_dropout = p_dropout
         self.latent_channels = latent_channels
-        self.version = version
 
         self.ssl_proj = nn.Conv1d(768, hidden_channels, 1)
 
@@ -211,14 +207,9 @@ class TextEncoder(nn.Module):
         self.encoder_text = attentions.Encoder(
             hidden_channels, filter_channels, n_heads, n_layers, kernel_size, p_dropout
         )
-
-        if self.version == "v1":
-            symbols = symbols_v1.symbols
-        else:
-            symbols = symbols_v2.symbols
         self.text_embedding = nn.Embedding(len(symbols), hidden_channels)
 
-        self.mrte = attentions.MRTE()
+        self.mrte = MRTE()
 
         self.encoder2 = attentions.Encoder(
             hidden_channels,
@@ -231,7 +222,7 @@ class TextEncoder(nn.Module):
 
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-    def forward(self, y, text, ge, speed=1):
+    def forward(self, y, text, ge):
         y_mask = torch.ones_like(y[:1,:1,:])
 
         y = self.ssl_proj(y * y_mask) * y_mask
@@ -244,13 +235,29 @@ class TextEncoder(nn.Module):
         y = self.mrte(y, y_mask, text, text_mask, ge)
 
         y = self.encoder2(y * y_mask, y_mask)
-        if(speed!=1):
-            y = F.interpolate(y, size=int(y.shape[-1] / speed)+1, mode="linear")
-            y_mask = F.interpolate(y_mask, size=y.shape[-1], mode="nearest")
 
         stats = self.proj(y) * y_mask
         m, logs = torch.split(stats, self.out_channels, dim=1)
         return y, m, logs, y_mask
+
+    def extract_latent(self, x):
+        x = self.ssl_proj(x)
+        quantized, codes, commit_loss, quantized_list = self.quantizer(x)
+        return codes.transpose(0, 1)
+
+    def decode_latent(self, codes, y_mask, refer, refer_mask, ge):
+        quantized = self.quantizer.decode(codes)
+
+        y = self.vq_proj(quantized) * y_mask
+        y = self.encoder_ssl(y * y_mask, y_mask)
+
+        y = self.mrte(y, y_mask, refer, refer_mask, ge)
+
+        y = self.encoder2(y * y_mask, y_mask)
+
+        stats = self.proj(y) * y_mask
+        m, logs = torch.split(stats, self.out_channels, dim=1)
+        return y, m, logs, y_mask, quantized
 
 
 class ResidualCouplingBlock(nn.Module):
@@ -432,7 +439,7 @@ class Generator(torch.nn.Module):
         if gin_channels != 0:
             self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
 
-    def forward(self, x, g:Optional[torch.Tensor]=None):
+    def forward(self, x, g=None):
         x = self.conv_pre(x)
         if g is not None:
             x = x + self.cond(g)
@@ -810,7 +817,6 @@ class SynthesizerTrn(nn.Module):
         use_sdp=True,
         semantic_frame_rate=None,
         freeze_quantizer=None,
-        version="v2",
         **kwargs
     ):
         super().__init__()
@@ -831,7 +837,6 @@ class SynthesizerTrn(nn.Module):
         self.segment_size = segment_size
         self.n_speakers = n_speakers
         self.gin_channels = gin_channels
-        self.version = version
 
         self.use_sdp = use_sdp
         self.enc_p = TextEncoder(
@@ -842,7 +847,6 @@ class SynthesizerTrn(nn.Module):
             n_layers,
             kernel_size,
             p_dropout,
-            version=version,
         )
         self.dec = Generator(
             inter_channels,
@@ -854,24 +858,22 @@ class SynthesizerTrn(nn.Module):
             upsample_kernel_sizes,
             gin_channels=gin_channels,
         )
-        # self.enc_q = PosteriorEncoder(
-        #     spec_channels,
-        #     inter_channels,
-        #     hidden_channels,
-        #     5,
-        #     1,
-        #     16,
-        #     gin_channels=gin_channels,
-        # )
+        self.enc_q = PosteriorEncoder(
+            spec_channels,
+            inter_channels,
+            hidden_channels,
+            5,
+            1,
+            16,
+            gin_channels=gin_channels,
+        )
         self.flow = ResidualCouplingBlock(
             inter_channels, hidden_channels, 5, 1, 4, gin_channels=gin_channels
         )
 
-        # self.version=os.environ.get("version","v1")
-        if self.version == "v1":
-            self.ref_enc = modules.MelStyleEncoder(spec_channels, style_vector_dim=gin_channels)
-        else:
-            self.ref_enc = modules.MelStyleEncoder(704, style_vector_dim=gin_channels)
+        self.ref_enc = modules.MelStyleEncoder(
+            spec_channels, style_vector_dim=gin_channels
+        )
 
         ssl_dim = 768
         self.ssl_dim = ssl_dim
@@ -890,12 +892,9 @@ class SynthesizerTrn(nn.Module):
             # self.enc_p.encoder_text.requires_grad_(False)
             # self.enc_p.mrte.requires_grad_(False)
 
-    def forward(self, codes, text, refer,noise_scale=0.5, speed=1):
+    def forward(self, codes, text, refer):
         refer_mask = torch.ones_like(refer[:1,:1,:])
-        if (self.version == "v1"):
-            ge = self.ref_enc(refer * refer_mask, refer_mask)
-        else:
-            ge = self.ref_enc(refer[:, :704] * refer_mask, refer_mask)
+        ge = self.ref_enc(refer * refer_mask, refer_mask)
 
         quantized = self.quantizer.decode(codes)
         if self.semantic_frame_rate == "25hz":
@@ -903,10 +902,10 @@ class SynthesizerTrn(nn.Module):
             quantized = dquantized.contiguous().view(1, self.ssl_dim, -1)
 
         x, m_p, logs_p, y_mask = self.enc_p(
-            quantized, text, ge, speed
+            quantized, text, ge
         )
         
-        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
+        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p)
 
         z = self.flow(z_p, y_mask, g=ge, reverse=True)
 

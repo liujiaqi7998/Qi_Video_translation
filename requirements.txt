@@ -4,7 +4,6 @@ tensorboard
 librosa==0.9.2
 numba==0.56.4
 pytorch-lightning
-gradio>=4.0,<=4.24.0
 ffmpeg-python
 onnxruntime; sys_platform == 'darwin'
 onnxruntime-gpu; sys_platform != 'darwin'
@@ -13,6 +12,7 @@ funasr==1.0.27
 cn2an
 pypinyin
 pyopenjtalk>=0.3.4
+# pyopenjtalk
 g2p_en
 torchaudio
 modelscope==1.10.0
@@ -27,10 +27,23 @@ LangSegment>=0.2.0
 Faster_Whisper
 wordsegment
 rotary_embedding_torch
-pyjyutping 
+pyjyutping
 g2pk2
 ko_pron
 opencc; sys_platform != 'linux'
 opencc==1.1.1; sys_platform == 'linux'
 python_mecab_ko; sys_platform != 'win32'
-fastapi<0.112.2
+loguru
+pysubs2
+retrying
+langid
+gradio
+sqlalchemy
+pydub
+soundfile
+whisper
+loguru
+# 部署用
+celery
+Redis
+boto3

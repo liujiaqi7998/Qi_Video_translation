@@ -268,15 +268,15 @@ def multi_head_attention_forward_patched(
     if cache != None:
         if cache["first_infer"] == 1:
             cache["k"][cache["stage"]] = k
-            # print(0,cache["k"].shape)
+            # print(0,workplace["k"].shape)
             cache["v"][cache["stage"]] = v
         else:  ###12个layer每个都要留自己的cache_kv
-            # print(1,cache["k"].shape)
+            # print(1,workplace["k"].shape)
             cache["k"][cache["stage"]] = torch.cat(
                 [cache["k"][cache["stage"]], k], 0
             )  ##本来时序是1，但是proj的时候可能transpose了所以时序到0维了
             cache["v"][cache["stage"]] = torch.cat([cache["v"][cache["stage"]], v], 0)
-            # print(2, cache["k"].shape)
+            # print(2, workplace["k"].shape)
             src_len = cache["k"][cache["stage"]].shape[0]
             k = cache["k"][cache["stage"]]
             v = cache["v"][cache["stage"]]
@@ -284,7 +284,7 @@ def multi_head_attention_forward_patched(
             #     attn_mask=attn_mask[-1:,]
             # print(attn_mask.shape,attn_mask)
         cache["stage"] = (cache["stage"] + 1) % cache["all_stage"]
-    # print(2333,cache)
+    # print(2333,workplace)
     # prep attention mask
 
     attn_mask = _canonical_mask(

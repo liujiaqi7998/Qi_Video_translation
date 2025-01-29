@@ -1,0 +1,27 @@
+version: '3'
+
+services:
+
+  qi_video_translation_dev_liujiaqi:
+    image: qi_video_translation:dev_202501192044
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qi_video_translation_api
+    restart: unless-stopped
+    network_mode: host
+    tty: true
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - "./TEMP:/app/TEMP"
+    command: tail -f /dev/null
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
